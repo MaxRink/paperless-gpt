@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -25,6 +26,7 @@ import (
 	"github.com/disintegration/imaging"
 	"github.com/gen2brain/go-fitz"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 	"gorm.io/gorm"
@@ -36,6 +38,46 @@ type PaperlessClient struct {
 	APIToken    string
 	HTTPClient  *http.Client
 	CacheFolder string
+}
+
+// openPDFForOCR opens a PDF with MuPDF. Some PDFs are owner-password
+// encrypted while permitting an empty user password; go-fitz reports those as
+// ErrNeedsPassword. Retry only that case against a temporary decrypted copy so
+// the Paperless original is never modified. A non-empty password remains a
+// hard failure and is classified by the caller.
+func openPDFForOCR(filename string) (*fitz.Document, func(), error) {
+	doc, err := fitz.New(filename)
+	if err == nil {
+		return doc, func() {}, nil
+	}
+	if !errors.Is(err, fitz.ErrNeedsPassword) {
+		return nil, func() {}, err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(filename), ".paperless-gpt-empty-password-*.pdf")
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("create temporary PDF for empty-password retry: %w", err)
+	}
+	tmpName := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return nil, func() {}, fmt.Errorf("close temporary PDF for empty-password retry: %w", err)
+	}
+	conf := model.NewDefaultConfiguration()
+	conf.UserPW = ""
+	conf.OwnerPW = ""
+	if err := api.DecryptFile(filename, tmpName, conf); err != nil {
+		os.Remove(tmpName)
+		return nil, func() {}, fmt.Errorf("PDF requires a non-empty password: %w", err)
+	}
+	doc, err = fitz.New(tmpName)
+	if err != nil {
+		os.Remove(tmpName)
+		return nil, func() {}, fmt.Errorf("open empty-password PDF copy: %w", err)
+	}
+	cleanup := func() {
+		os.Remove(tmpName)
+	}
+	return doc, cleanup, nil
 }
 
 // CustomField represents a custom field from the Paperless-ngx API
@@ -1119,10 +1161,11 @@ func (client *PaperlessClient) DownloadDocumentAsImages(ctx context.Context, doc
 	}
 	tmpFile.Close()
 
-	doc, err := fitz.New(tmpFile.Name())
+	doc, cleanup, err := openPDFForOCR(tmpFile.Name())
 	if err != nil {
 		return nil, 0, err
 	}
+	defer cleanup()
 	defer doc.Close()
 
 	totalPages := doc.NumPage()
@@ -1318,10 +1361,11 @@ func (client *PaperlessClient) DownloadDocumentAsPDF(ctx context.Context, docume
 	}
 	tmpFile.Close()
 
-	doc, err := fitz.New(tmpFile.Name())
+	doc, cleanup, err := openPDFForOCR(tmpFile.Name())
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	defer cleanup()
 	defer doc.Close()
 
 	totalPages := doc.NumPage()
