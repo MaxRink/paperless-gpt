@@ -3,6 +3,16 @@ name: Publish Paperless v5 candidate
 on:
   workflow_dispatch:
     inputs:
+      source_ref:
+        description: Fork branch or commit to build
+        required: true
+        default: codex/paperless-v5-candidate
+        type: string
+      source_sha:
+        description: Expected source commit embedded in image metadata
+        required: true
+        default: cf8128f284f604e7a2c6370e259656fe3931be16
+        type: string
       image_tag:
         description: GHCR tag to publish
         required: true
@@ -22,6 +32,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.source_ref }}
           persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -52,6 +63,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.source_ref }}
           persist-credentials: false
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -71,7 +83,7 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/paperless-gpt:${{ inputs.image_tag }}
           build-args: |
             VERSION=${{ inputs.image_tag }}
-            COMMIT=${{ github.sha }}
+            COMMIT=${{ inputs.source_sha }}
             BUILD_DATE=${{ github.event.repository.pushed_at }}
           provenance: mode=max
           sbom: true
@@ -84,4 +96,4 @@ jobs:
       - name: Publish immutable digest
         run: |
           printf 'image=ghcr.io/%s/paperless-gpt@%s\n' '${{ github.repository_owner }}' '${{ steps.image.outputs.digest }}'
-          printf 'source=%s\n' '${{ github.sha }}'
+          printf 'source=%s\n' '${{ inputs.source_sha }}'
