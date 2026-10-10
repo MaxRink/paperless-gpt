@@ -14,3 +14,5 @@ jobs:
       - run: go mod download
       - run: go test -v -run 'TestRateLimitedLLM|Test.*RetryAfter' llm_client.go llm_client_test.go
       - run: go test -v -run 'Test.*RetryAfter|Test.*Header' ./ocr
+
+# final overflow-safe verification
