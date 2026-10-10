@@ -360,6 +360,35 @@ func TestRateLimitedLLM_GenerateContent_Error(t *testing.T) {
 	assert.Equal(t, 4, mockLLM.generateIndex, "Should have made 1 initial + 3 retry calls")
 }
 
+func TestRateLimitedLLM_GenerateContent_RetryUsesLimiter(t *testing.T) {
+	mockLLM := &rateLimitMockLLM{
+		generateResponses: []*llms.ContentResponse{
+			nil,
+			{Choices: []*llms.ContentChoice{{Content: "after limiter"}}},
+		},
+		generateErrors: []error{errors.New("transient failure"), nil},
+	}
+	wrapped := NewRateLimitedLLM(mockLLM, RateLimitConfig{
+		RequestsPerMinute: 600, // 100 ms between requests.
+		MaxRetries:        1,
+		BackoffMaxWait:    5 * time.Millisecond,
+	})
+	wrapped.backoffMin = time.Millisecond
+
+	start := time.Now()
+	response, err := wrapped.GenerateContent(context.Background(), []llms.MessageContent{{
+		Role:  llms.ChatMessageTypeHuman,
+		Parts: []llms.ContentPart{llms.TextContent{Text: "retry spacing"}},
+	}})
+
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	assert.Equal(t, "after limiter", response.Choices[0].Content)
+	assert.Equal(t, 2, mockLLM.generateIndex)
+	assert.GreaterOrEqual(t, time.Since(start), 80*time.Millisecond,
+		"retry must wait for the configured limiter even when backoff is short")
+}
+
 func TestRateLimitedLLM_GenerateContent_EventualSuccess(t *testing.T) {
 	mockLLM := newEventuallySuccessfulRateLimitMock(2) // Fail twice, succeed on third try
 	config := RateLimitConfig{
