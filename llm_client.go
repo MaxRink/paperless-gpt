@@ -97,6 +97,13 @@ func (r *RateLimitedLLM) Call(ctx context.Context, prompt string, options ...llm
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-time.After(jitter):
+			// Retries consume provider admission slots too. Wait through the
+			// same limiter before issuing the next request.
+			if r.rateLimiter != nil {
+				if err := r.rateLimiter.Wait(ctx); err != nil {
+					return "", fmt.Errorf("rate limiter wait failed: %w", err)
+				}
+			}
 			// Continue with retry
 			attempt++
 			lastErr = err
@@ -191,6 +198,13 @@ func (r *RateLimitedLLM) GenerateContent(ctx context.Context, messages []llms.Me
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(jitter):
+			// Keep retries behind the configured request limiter as well as the
+			// exponential backoff.
+			if r.rateLimiter != nil {
+				if err := r.rateLimiter.Wait(ctx); err != nil {
+					return nil, fmt.Errorf("rate limiter wait failed: %w", err)
+				}
+			}
 			// Continue with retry
 			attempt++
 			lastErr = err
