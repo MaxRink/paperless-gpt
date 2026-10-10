@@ -1,0 +1,22 @@
+name: Codex focused Retry-After tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/verify-retryafter-hosted
+
+permissions:
+  contents: read
+
+jobs:
+  focused-go-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27'
+      - run: go mod download
+      - run: go test -v -run 'TestRateLimitedLLM|Test.*RetryAfter' llm_client.go llm_client_test.go
+      - run: go test -v -run 'Test.*RetryAfter|Test.*Header' ./ocr
