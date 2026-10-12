@@ -220,8 +220,9 @@ func TestTokenLimitInCorrespondentGeneration(t *testing.T) {
 	ctx := context.Background()
 	availableCorrespondents := []string{"Test Corp", "Example Inc"}
 	correspondentBlackList := []string{"Blocked Corp"}
+	correspondentTemplate := template.Must(template.New("correspondent-test").Parse(testCorrespondentTemplate))
 
-	_, err := app.getSuggestedCorrespondent(ctx, longContent, "Test Title", availableCorrespondents, correspondentBlackList, nil)
+	_, err := app.getSuggestedCorrespondent(ctx, longContent, "Test Title", availableCorrespondents, correspondentBlackList, correspondentTemplate)
 	require.NoError(t, err)
 
 	// Verify the final prompt size
@@ -236,7 +237,8 @@ func TestTokenLimitInCorrespondentGeneration(t *testing.T) {
 func TestCorrespondentGenerationBoundsOutputTokens(t *testing.T) {
 	mock := &mockLLM{}
 	app := &App{LLM: mock}
-	_, err := app.getSuggestedCorrespondent(context.Background(), "Example Corp invoice", "Invoice", []string{"Example Corp"}, nil, nil)
+	correspondentTemplate := template.Must(template.New("correspondent-test").Parse(testCorrespondentTemplate))
+	_, err := app.getSuggestedCorrespondent(context.Background(), "Example Corp invoice", "Invoice", []string{"Example Corp"}, nil, correspondentTemplate)
 	require.NoError(t, err)
 	assert.Equal(t, 512, mock.lastMaxTokens, "correspondent suggestions need a bounded local-model output reservation")
 }
