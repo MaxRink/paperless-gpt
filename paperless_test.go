@@ -242,6 +242,38 @@ func TestCatalogCachesAvoidRepeatedLookupsAndReturnCopies(t *testing.T) {
 	assert.Equal(t, []DocumentType{{ID: 3, Name: "Receipt"}}, secondTypes)
 }
 
+func TestCreateCorrespondentInvalidatesCacheBeforeMalformedResponse(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.teardown()
+	getCalls := 0
+	postCalls := 0
+	env.setMockResponse("/api/correspondents/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			postCalls++
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		getCalls++
+		w.WriteHeader(http.StatusOK)
+		if getCalls == 1 {
+			_, _ = w.Write([]byte(`{"results":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"id":42,"name":"Acme GmbH"}]}`))
+	})
+
+	_, err := env.client.CreateOrGetCorrespondent(context.Background(), Correspondent{Name: "Acme GmbH"})
+	require.Error(t, err)
+	assert.Equal(t, 1, getCalls)
+	assert.Equal(t, 1, postCalls)
+
+	id, err := env.client.CreateOrGetCorrespondent(context.Background(), Correspondent{Name: "Acme GmbH"})
+	require.NoError(t, err)
+	assert.Equal(t, 42, id)
+	assert.Equal(t, 2, getCalls, "the malformed successful response must not leave a cached negative result")
+}
+
 func TestCreateOrGetTagSerializesConcurrentCreation(t *testing.T) {
 	env := newTestEnv(t)
 	defer env.teardown()

@@ -243,6 +243,28 @@ func TestCorrespondentGenerationBoundsOutputTokens(t *testing.T) {
 	assert.Equal(t, 512, mock.lastMaxTokens, "correspondent suggestions need a bounded local-model output reservation")
 }
 
+func TestDefaultCorrespondentPromptPreservesExactCatalogName(t *testing.T) {
+	promptBytes, err := os.ReadFile("default_prompts/correspondent_prompt.tmpl")
+	require.NoError(t, err)
+	tmpl, err := template.New("correspondent").Parse(string(promptBytes))
+	require.NoError(t, err)
+
+	mock := &mockLLM{Response: "Microsoft Ireland Operations Limited"}
+	app := &App{LLM: mock}
+	_, err = app.getSuggestedCorrespondent(
+		context.Background(),
+		"Invoice from Microsoft Ireland Operations Limited",
+		"Invoice",
+		[]string{"Microsoft Ireland Operations Limited"},
+		nil,
+		tmpl,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, mock.lastPrompt, "Microsoft Ireland Operations Limited")
+	assert.Contains(t, mock.lastPrompt, "return that exact name")
+	assert.NotContains(t, mock.lastPrompt, "use \"Microsoft\" instead")
+}
+
 func TestTokenLimitInTagGeneration(t *testing.T) {
 	testLogger := logrus.WithField("test", "test")
 
