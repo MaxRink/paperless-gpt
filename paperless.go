@@ -2170,6 +2170,11 @@ func (client *PaperlessClient) CreateTag(ctx context.Context, tagName string) (i
 		return 0, fmt.Errorf("error creating tag: %d, %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	// A successful POST has already changed the upstream catalog. Drop the
+	// snapshot before decoding the response so a malformed 2xx body cannot
+	// leave a stale negative cache entry behind.
+	client.invalidateTagCatalog()
+
 	var createdTag struct {
 		ID int `json:"id"`
 	}
