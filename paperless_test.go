@@ -274,6 +274,40 @@ func TestCreateCorrespondentInvalidatesCacheBeforeMalformedResponse(t *testing.T
 	assert.Equal(t, 2, getCalls, "the malformed successful response must not leave a cached negative result")
 }
 
+func TestCreateTagInvalidatesCacheBeforeMalformedResponse(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.teardown()
+	getCalls := 0
+	postCalls := 0
+	env.setMockResponse("/api/tags/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			postCalls++
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		getCalls++
+		w.WriteHeader(http.StatusOK)
+		if getCalls == 1 {
+			_, _ = w.Write([]byte(`{"results":[],"next":null}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"id":42,"name":"handoff"}],"next":null}`))
+	})
+
+	_, err := env.client.GetAllTags(context.Background())
+	require.NoError(t, err)
+	_, err = env.client.CreateTag(context.Background(), "handoff")
+	require.Error(t, err)
+	assert.Equal(t, 1, getCalls)
+	assert.Equal(t, 1, postCalls)
+
+	tags, err := env.client.GetAllTags(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"handoff": 42}, tags)
+	assert.Equal(t, 2, getCalls, "a malformed successful response must not leave a stale negative tag cache")
+}
+
 func TestCreateOrGetTagSerializesConcurrentCreation(t *testing.T) {
 	env := newTestEnv(t)
 	defer env.teardown()
