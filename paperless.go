@@ -38,6 +38,33 @@ type PaperlessClient struct {
 	APIToken    string
 	HTTPClient  *http.Client
 	CacheFolder string
+
+	// Catalogs change infrequently but are needed by every document read and
+	// suggestion batch. Keep a short-lived per-client snapshot so a UI refresh
+	// does not refetch every page of tags/correspondents/types.
+	tagsMu                 sync.Mutex
+	tagsCache              map[string]int
+	tagsCachedAt           time.Time
+	correspondentsMu       sync.Mutex
+	correspondentsCache    map[string]int
+	correspondentsCachedAt time.Time
+	documentTypesMu        sync.Mutex
+	documentTypesCache     []DocumentType
+	documentTypesCachedAt  time.Time
+}
+
+const catalogCacheTTL = 30 * time.Second
+
+func copyCatalogMap(in map[string]int) map[string]int {
+	out := make(map[string]int, len(in))
+	for name, id := range in {
+		out[name] = id
+	}
+	return out
+}
+
+func copyDocumentTypes(in []DocumentType) []DocumentType {
+	return append([]DocumentType(nil), in...)
 }
 
 // CustomField represents a custom field from the Paperless-ngx API
@@ -264,6 +291,12 @@ func (client *PaperlessClient) Do(ctx context.Context, method, path string, body
 
 // GetAllTags retrieves all tags from the Paperless-NGX API
 func (client *PaperlessClient) GetAllTags(ctx context.Context) (map[string]int, error) {
+	client.tagsMu.Lock()
+	defer client.tagsMu.Unlock()
+	if client.tagsCache != nil && time.Since(client.tagsCachedAt) < catalogCacheTTL {
+		return copyCatalogMap(client.tagsCache), nil
+	}
+
 	tagIDMapping := make(map[string]int)
 	// Paperless defaults to 25 results per page. This helper is used during
 	// startup for marker-tag checks, so asking for a larger page size avoids
@@ -321,7 +354,9 @@ func (client *PaperlessClient) GetAllTags(ctx context.Context) (map[string]int, 
 		}
 	}
 
-	return tagIDMapping, nil
+	client.tagsCache = tagIDMapping
+	client.tagsCachedAt = time.Now()
+	return copyCatalogMap(tagIDMapping), nil
 }
 
 // GetDocumentCountByTag checks if there is a document for the specified tag (it is much faster than api/documents/)
@@ -836,6 +871,7 @@ func (client *PaperlessClient) UpdateDocuments(ctx context.Context, documents []
 					log.Warnf("Document %d: could not use correspondent %q, applying the other changes without it: %v", documentID, document.SuggestedCorrespondent, err)
 					partialDroppedFields = append(partialDroppedFields, "correspondent")
 				} else {
+					availableCorrespondents[newCorr.Name] = newCorrID
 					originalFields["correspondent"] = originalDoc.Correspondent
 					updatedFields["correspondent"] = newCorrID
 				}
@@ -1458,7 +1494,7 @@ func describeDownload(data []byte) string {
 
 // DownloadDocumentAsImages downloads the specified document and converts it to images.
 // Single images pass through as one page; other non-PDF downloads fail with a
-// descriptive error instead of a fitz failure.
+// descriptive error instead of a PDF parsing failure.
 // If limitPages > 0, only the first N pages will be processed
 // Returns the image paths and the total number of pages in the original document
 func (client *PaperlessClient) DownloadDocumentAsImages(ctx context.Context, documentID int, limitPages int) ([]string, int, error) {
@@ -1869,6 +1905,10 @@ func (client *PaperlessClient) CreateOrGetCorrespondent(ctx context.Context, cor
 		return 0, err
 	}
 
+	client.correspondentsMu.Lock()
+	client.correspondentsCache = nil
+	client.correspondentsCachedAt = time.Time{}
+	client.correspondentsMu.Unlock()
 	return createdCorrespondent.ID, nil
 }
 
@@ -1882,6 +1922,12 @@ type CorrespondentResponse struct {
 
 // GetAllCorrespondents retrieves all correspondents from the Paperless-NGX API
 func (client *PaperlessClient) GetAllCorrespondents(ctx context.Context) (map[string]int, error) {
+	client.correspondentsMu.Lock()
+	defer client.correspondentsMu.Unlock()
+	if client.correspondentsCache != nil && time.Since(client.correspondentsCachedAt) < catalogCacheTTL {
+		return copyCatalogMap(client.correspondentsCache), nil
+	}
+
 	correspondentIDMapping := make(map[string]int)
 	path := "api/correspondents/?page_size=9999"
 
@@ -1907,11 +1953,19 @@ func (client *PaperlessClient) GetAllCorrespondents(ctx context.Context) (map[st
 		correspondentIDMapping[correspondent.Name] = correspondent.ID
 	}
 
-	return correspondentIDMapping, nil
+	client.correspondentsCache = correspondentIDMapping
+	client.correspondentsCachedAt = time.Now()
+	return copyCatalogMap(correspondentIDMapping), nil
 }
 
 // GetAllDocumentTypes retrieves all document types from the Paperless-NGX API
 func (client *PaperlessClient) GetAllDocumentTypes(ctx context.Context) ([]DocumentType, error) {
+	client.documentTypesMu.Lock()
+	defer client.documentTypesMu.Unlock()
+	if client.documentTypesCache != nil && time.Since(client.documentTypesCachedAt) < catalogCacheTTL {
+		return copyDocumentTypes(client.documentTypesCache), nil
+	}
+
 	var allDocumentTypes []DocumentType
 	path := "api/document_types/?page_size=1000" // Assuming a reasonable limit
 
@@ -1937,7 +1991,9 @@ func (client *PaperlessClient) GetAllDocumentTypes(ctx context.Context) ([]Docum
 
 	allDocumentTypes = append(allDocumentTypes, response.Results...)
 
-	return allDocumentTypes, nil
+	client.documentTypesCache = allDocumentTypes
+	client.documentTypesCachedAt = time.Now()
+	return copyDocumentTypes(allDocumentTypes), nil
 }
 
 // GetCustomFields retrieves all custom fields from the Paperless-NGX API
@@ -2078,7 +2134,16 @@ func (client *PaperlessClient) CreateTag(ctx context.Context, tagName string) (i
 		return 0, fmt.Errorf("error parsing created tag response: %w", err)
 	}
 
+	client.invalidateTagCatalog()
 	return createdTag.ID, nil
+}
+
+// invalidateTagCatalog drops the short-lived snapshot after a tag mutation.
+func (client *PaperlessClient) invalidateTagCatalog() {
+	client.tagsMu.Lock()
+	client.tagsCache = nil
+	client.tagsCachedAt = time.Time{}
+	client.tagsMu.Unlock()
 }
 
 // EnsureTagExists checks whether a tag with the given name exists in paperless-ngx

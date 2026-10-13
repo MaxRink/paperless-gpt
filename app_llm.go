@@ -63,6 +63,9 @@ func (app *App) getSuggestedCorrespondent(ctx context.Context, content string, s
 	prompt := promptBuffer.String()
 	log.Debugf("Correspondent suggestion prompt: %s", prompt)
 
+	// Correspondent suggestions are a single name (or "Unknown"). Keep the
+	// output reservation small so local fallback models can accept the full
+	// bounded document prompt without exhausting their context window.
 	completion, err := app.LLM.GenerateContent(ctx, []llms.MessageContent{
 		{
 			Parts: []llms.ContentPart{
@@ -72,13 +75,34 @@ func (app *App) getSuggestedCorrespondent(ctx context.Context, content string, s
 			},
 			Role: llms.ChatMessageTypeHuman,
 		},
-	})
+	}, llms.WithMaxTokens(512))
 	if err != nil {
 		return "", fmt.Errorf("error getting response from LLM: %v", err)
 	}
 
 	response := textsanitize.StripReasoning(strings.TrimSpace(completion.Choices[0].Content))
 	return response, nil
+}
+
+// validateCorrespondentSuggestion keeps the metadata boundary closed over the
+// existing Paperless catalog. The model may explain or invent a sender even
+// when the prompt asks for a bare name; that value must remain review-empty.
+func validateCorrespondentSuggestion(response string, available, blacklist []string) string {
+	candidate := strings.TrimSpace(strings.Trim(response, "`\"'"))
+	if candidate == "" || strings.EqualFold(candidate, "unknown") {
+		return ""
+	}
+	for _, blocked := range blacklist {
+		if strings.EqualFold(candidate, strings.TrimSpace(blocked)) {
+			return ""
+		}
+	}
+	for _, name := range available {
+		if strings.EqualFold(candidate, strings.TrimSpace(name)) {
+			return strings.TrimSpace(name)
+		}
+	}
+	return ""
 }
 
 // getSuggestedTags generates suggested tags for a document using the LLM.
@@ -786,6 +810,7 @@ func (app *App) generateSingleDocumentSuggestion(ctx context.Context, suggestion
 			log.Errorf("Error generating correspondents for document %d: %v", documentID, err)
 			return DocumentSuggestion{}, fmt.Errorf("Document %d: %v", documentID, err)
 		}
+		suggestedCorrespondent = validateCorrespondentSuggestion(suggestedCorrespondent, generationContext.availableCorrespondentNames, correspondentBlackList)
 	}
 
 	if suggestionRequest.GenerateDocumentTypes {
@@ -809,12 +834,10 @@ func (app *App) generateSingleDocumentSuggestion(ctx context.Context, suggestion
 	}
 
 	if suggestionRequest.GenerateCustomFields {
-		settingsMutex.RLock()
-		selectedIDs := settings.CustomFieldsSelectedIDs
-		settingsMutex.RUnlock()
+		selectedIDs := customFieldIDsFor(suggestionRequest.Workflow)
 
 		if len(selectedIDs) == 0 {
-			log.Warnf("Custom field generation is enabled, but no custom fields are selected in the settings. Please select at least one custom field for this feature to work.")
+			log.Warnf("Custom field generation is enabled, but no custom fields are selected (in Settings, or in the AI workflow). Please select at least one custom field for this feature to work.")
 		} else {
 			suggestedCustomFields, err = app.getSuggestedCustomFields(ctx, doc, selectedIDs, docLogger, wfTemplate("custom_field_prompt", customFieldTemplate))
 			if err != nil {
@@ -1142,4 +1165,15 @@ func handoverTags(autoTagComplete string, isAutoProcessing bool, triggerTag stri
 		add = []string{completionTag}
 	}
 	return remove, add
+}
+
+// customFieldIDsFor returns the custom fields to fill: the workflow's own
+// selection when it has one, the global selection from Settings otherwise.
+func customFieldIDsFor(workflow *WorkflowConfig) []int {
+	if workflow != nil && len(workflow.CustomFieldIDs) > 0 {
+		return slices.Clone(workflow.CustomFieldIDs)
+	}
+	settingsMutex.RLock()
+	defer settingsMutex.RUnlock()
+	return slices.Clone(settings.CustomFieldsSelectedIDs)
 }
