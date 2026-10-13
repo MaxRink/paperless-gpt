@@ -229,6 +229,14 @@ func TestTokenLimitInCorrespondentGeneration(t *testing.T) {
 }
 
 func TestDefaultCorrespondentPromptPreservesExactCatalogName(t *testing.T) {
+	originalLimit := os.Getenv("TOKEN_LIMIT")
+	t.Cleanup(func() {
+		_ = os.Setenv("TOKEN_LIMIT", originalLimit)
+		resetTokenLimit()
+	})
+	_ = os.Setenv("TOKEN_LIMIT", "0")
+	resetTokenLimit()
+
 	promptBytes, err := os.ReadFile("default_prompts/correspondent_prompt.tmpl")
 	require.NoError(t, err)
 	tmpl, err := template.New("correspondent").Funcs(sprig.FuncMap()).Parse(string(promptBytes))
