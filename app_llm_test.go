@@ -12,6 +12,7 @@ import (
 	"testing"
 	"text/template"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -246,7 +247,7 @@ func TestCorrespondentGenerationBoundsOutputTokens(t *testing.T) {
 func TestDefaultCorrespondentPromptPreservesExactCatalogName(t *testing.T) {
 	promptBytes, err := os.ReadFile("default_prompts/correspondent_prompt.tmpl")
 	require.NoError(t, err)
-	tmpl, err := template.New("correspondent").Parse(string(promptBytes))
+	tmpl, err := template.New("correspondent").Funcs(sprig.FuncMap()).Parse(string(promptBytes))
 	require.NoError(t, err)
 
 	mock := &mockLLM{Response: "Microsoft Ireland Operations Limited"}
