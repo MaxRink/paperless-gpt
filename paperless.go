@@ -1468,6 +1468,26 @@ func encodePageJPEG(img image.Image) (*bytes.Buffer, image.Image, error) {
 	return buf, img, nil
 }
 
+// writePageFile writes a rendered page and always closes the file before
+// returning. The injected creator keeps write and close failures testable
+// without changing the production path, which uses os.Create.
+func writePageFile(path string, data []byte, create func(string) (io.WriteCloser, error)) error {
+	f, err := create(path)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		if closeErr := f.Close(); closeErr != nil {
+			return fmt.Errorf("write page %s: %w (close: %v)", path, err, closeErr)
+		}
+		return fmt.Errorf("write page %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close page %s: %w", path, err)
+	}
+	return nil
+}
+
 // writeOriginalImageAsPage stores an original image download (served instead
 // of a PDF when paperless-ngx has archive generation disabled) as the single
 // page image the OCR providers consume.
@@ -1658,16 +1678,11 @@ func (client *PaperlessClient) DownloadDocumentAsImages(ctx context.Context, doc
 
 			// Save image to file
 			imagePath := filepath.Join(docDir, fmt.Sprintf("page%03d.jpg", n))
-			f, err := os.Create(imagePath)
-			if err != nil {
+			if err := writePageFile(imagePath, buf.Bytes(), func(path string) (io.WriteCloser, error) {
+				return os.Create(path)
+			}); err != nil {
 				return err
 			}
-
-			if _, err := f.Write(buf.Bytes()); err != nil {
-				f.Close()
-				return err
-			}
-			f.Close()
 
 			// Verify the JPEG file
 			file, err := os.Open(imagePath)
