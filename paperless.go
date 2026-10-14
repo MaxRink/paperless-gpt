@@ -638,6 +638,26 @@ func (client *PaperlessClient) GetDocument(ctx context.Context, documentID int) 
 	}, nil
 }
 
+func hasUnresolvedTagIDs(tagIDs []int, tags map[string]int) bool {
+	known := make(map[int]struct{}, len(tags))
+	for _, id := range tags {
+		known[id] = struct{}{}
+	}
+	for _, id := range tagIDs {
+		if _, ok := known[id]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (client *PaperlessClient) invalidateTagCatalog() {
+	client.tagsMu.Lock()
+	client.tagsCache = nil
+	client.tagsCachedAt = time.Time{}
+	client.tagsMu.Unlock()
+}
+
 // getCurrentCustomFields fetches only the document's custom fields. Unlike
 // GetDocument it does not resolve tag, correspondent or document-type names,
 // so a failure in those auxiliary lookups cannot block a custom-fields merge.
