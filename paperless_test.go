@@ -1943,7 +1943,7 @@ func TestUpdateDocuments_CustomFieldsMergeUsesCurrentState(t *testing.T) {
 						"title":         "Test Doc",
 						"tags":          []int{1},
 						"custom_fields": tt.serverFields,
-						"content":       "content",
+						"content":       "Invoice total: EUR786.50",
 					})
 					return
 				}
@@ -1997,6 +1997,7 @@ func TestUpdateDocuments_SkipsInvalidCustomFieldDate(t *testing.T) {
 		writeMode      string
 		serverFields   []map[string]interface{}
 		suggested      []CustomFieldSuggestion
+		content        string
 		wantFieldValue map[int]interface{}
 		wantNoFields   bool
 	}{
@@ -2039,6 +2040,33 @@ func TestUpdateDocuments_SkipsInvalidCustomFieldDate(t *testing.T) {
 			},
 			wantNoFields: true,
 		},
+		{
+			name:      "invented monetary value keeps existing field and applies title",
+			writeMode: "update",
+			serverFields: []map[string]interface{}{
+				{"field": 1, "value": "EUR123.45"},
+			},
+			suggested: []CustomFieldSuggestion{
+				{ID: 1, Name: "Amount", Value: "EUR888.00"},
+			},
+			wantFieldValue: map[int]interface{}{
+				1: "EUR123.45",
+			},
+		},
+		{
+			name:      "missing source amount keeps existing field",
+			writeMode: "update",
+			serverFields: []map[string]interface{}{
+				{"field": 1, "value": "EUR123.45"},
+			},
+			suggested: []CustomFieldSuggestion{
+				{ID: 1, Name: "Amount", Value: "EUR888.88"},
+			},
+			content: "Document contains no monetary amount.",
+			wantFieldValue: map[int]interface{}{
+				1: "EUR123.45",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2075,7 +2103,7 @@ func TestUpdateDocuments_SkipsInvalidCustomFieldDate(t *testing.T) {
 						"title":         "Test Doc",
 						"tags":          []int{1},
 						"custom_fields": tt.serverFields,
-						"content":       "content",
+						"content":       "Invoice total: EUR786.50",
 					})
 					return
 				}
@@ -2098,9 +2126,13 @@ func TestUpdateDocuments_SkipsInvalidCustomFieldDate(t *testing.T) {
 				}
 			})
 
+			content := tt.content
+			if content == "" {
+				content = "Invoice total: EUR786.50"
+			}
 			suggestion := DocumentSuggestion{
 				ID:                    9,
-				OriginalDocument:      Document{ID: 9, Title: "Test Doc", Tags: []string{autoTag}},
+				OriginalDocument:      Document{ID: 9, Title: "Test Doc", Tags: []string{autoTag}, Content: content},
 				SuggestedTitle:        "Invoice RV 163/2026",
 				SuggestedCustomFields: tt.suggested,
 				CustomFieldsWriteMode: tt.writeMode,
@@ -2110,6 +2142,11 @@ func TestUpdateDocuments_SkipsInvalidCustomFieldDate(t *testing.T) {
 			require.NoError(t, err, "a locally-skipped invalid date must not fail the update or produce a PartialUpdateError")
 			require.Equal(t, 1, patchCount, "the update must go through in one PATCH")
 			assert.Equal(t, "Invoice RV 163/2026", receivedPatch["title"], "valid fields must still be sent")
+			if tt.name == "invented monetary value keeps existing field and applies title" || tt.name == "missing source amount keeps existing field" {
+				assert.NotContains(t, receivedPatch, "custom_fields", "ungrounded model amount must not overwrite the existing field")
+				assert.NotContains(t, receivedPatch, "tags", "a grounded-field rejection must not change review tags or mark the document failed")
+				return
+			}
 
 			if tt.wantNoFields {
 				assert.NotContains(t, receivedPatch, "custom_fields", "nothing valid was suggested, so custom fields must not be touched")

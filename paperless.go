@@ -638,26 +638,6 @@ func (client *PaperlessClient) GetDocument(ctx context.Context, documentID int) 
 	}, nil
 }
 
-func hasUnresolvedTagIDs(tagIDs []int, tags map[string]int) bool {
-	known := make(map[int]struct{}, len(tags))
-	for _, id := range tags {
-		known[id] = struct{}{}
-	}
-	for _, id := range tagIDs {
-		if _, ok := known[id]; !ok {
-			return true
-		}
-	}
-	return false
-}
-
-func (client *PaperlessClient) invalidateTagCatalog() {
-	client.tagsMu.Lock()
-	client.tagsCache = nil
-	client.tagsCachedAt = time.Time{}
-	client.tagsMu.Unlock()
-}
-
 // getCurrentCustomFields fetches only the document's custom fields. Unlike
 // GetDocument it does not resolve tag, correspondent or document-type names,
 // so a failure in those auxiliary lookups cannot block a custom-fields merge.
@@ -1009,6 +989,10 @@ func (client *PaperlessClient) UpdateDocuments(ctx context.Context, documents []
 			value := normalizeCustomFieldValue(dataType, sf.Value)
 			if err := validateCustomFieldValue(dataType, value); err != nil {
 				log.Warnf("Document %d: custom field %q (id %d) value %v is not valid for its %s type, skipping. (%v)", documentID, sf.Name, sf.ID, sf.Value, dataType, err)
+				continue
+			}
+			if dataType == "monetary" && !monetaryValueGroundedForField(value, sf.Name, originalDoc.Content) {
+				log.Warnf("Document %d: monetary custom field id %d is not grounded in a labelled source amount; skipping", documentID, sf.ID)
 				continue
 			}
 			sf.Value = value

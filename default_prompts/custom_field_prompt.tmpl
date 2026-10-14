@@ -16,12 +16,13 @@ You have to find the values for a list of custom fields that are provided as an 
 **Instructions:**
 1.  Analyze the document content to find the values for the custom fields listed in the XML. The language of the custom fields and of the document may differ.
 2.  The `type` attribute in each `<field>` tag indicates the data type you should look for (e.g., `string`, `date`, `integer`).
-3.  For fields of type `monetary`, the value must be a number with two decimal places and a period as the decimal separator. You must also identify the currency from the document and place its three-letter code (e.g., EUR, USD) at the beginning of the value. Remove thousands separators and convert the decimal comma to a period. Format: an amount printed as `X.XXX,XX €` becomes `EURXXXX.XX`.
+3.  For fields of type `monetary`, copy the exact invoice or contract amount from the document, including both fractional digits. Never round, pad, truncate, estimate, or replace non-zero cents with `.00`. Preserve the source digits before formatting: `888.88` must remain `888.88`, `1,234.56` must become `1234.56`, and `1.234,56` must become `1234.56`. Use a period as the decimal separator, remove only thousands separators, and place the identified three-letter currency code (e.g., EUR, USD) at the beginning. An amount printed as `X.XXX,XX €` becomes `EURXXXX.XX`. If the amount is ambiguous, incomplete, or has more than two fractional digits, omit the field instead of guessing.
 4.  For fields of type `documentlink`, follow the field's `<description>`: the value must be a JSON array of strings with the identifiers (e.g. invoice, contract or order numbers) of the other documents this document refers to, exactly as printed. Format: `["<identifier>"]`.
 5.  Return a valid JSON array where each object contains the `field` (the **name** of the custom field) and the `value` you extracted.
 6.  If you cannot find a value for a specific field, do not include it in the JSON array. Every value must come from the document content: never output a value or format placeholder from these instructions.
-7.  If a specific field is not relevant for the given document type (e.g., an 'Invoice Number' field for a delivery slip), simply omit that field from the JSON array. Do not return an empty array unless none of the fields are relevant.
-8.  Ensure the output is only the JSON array, with no additional text or explanations.
+7.  For monetary values, use the amount printed next to the relevant label (invoice total, gross total, contract price, etc.). Do not copy a tax, subtotal, order number, date, or amount from the title when the document does not identify it as the requested field.
+8.  If a specific field is not relevant for the given document type (e.g., an 'Invoice Number' field for a delivery slip), simply omit that field from the JSON array. Do not return an empty array unless none of the fields are relevant.
+9.  Ensure the output is only the JSON array, with no additional text or explanations.
 
 **Output format** (the values are placeholders, not data):
 ```json
