@@ -83,9 +83,18 @@ FROM docker.io/alpine:3.24.2
 ENV GIN_MODE=release
 
 # Install necessary runtime dependencies
+# renovate: datasource=repology depName=alpine_3_24/tesseract-ocr versioning=loose
+ENV TESSERACT_VERSION="5.5.2-r0"
+# renovate: datasource=repology depName=alpine_3_24/tesseract-ocr-data-deu versioning=loose
+ENV TESSERACT_DATA_DEU_VERSION="5.5.2-r0"
+# renovate: datasource=repology depName=alpine_3_24/tesseract-ocr-data-eng versioning=loose
+ENV TESSERACT_DATA_ENG_VERSION="5.5.2-r0"
 RUN apk add --no-cache \
     ca-certificates \
-    su-exec
+    su-exec \
+    "tesseract-ocr=${TESSERACT_VERSION}" \
+    "tesseract-ocr-data-deu=${TESSERACT_DATA_DEU_VERSION}" \
+    "tesseract-ocr-data-eng=${TESSERACT_DATA_ENG_VERSION}"
 
 # Set the working directory inside the container
 WORKDIR /app/

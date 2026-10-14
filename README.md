@@ -297,6 +297,8 @@ services:
 
       # Option 4: Docling Server
       # OCR_PROVIDER: 'docling'              # Use a Docling server
+      # OCR_PROVIDER: 'tesseract'            # Use local Tesseract hOCR (image mode)
+      # TESSERACT_LANGUAGES: 'deu+eng'       # Allowlisted local language packs
       # DOCLING_URL: 'http://your-docling-server:port' # URL of your Docling instance
       # DOCLING_IMAGE_EXPORT_MODE: "placeholder" # Optional, defaults to "embedded"
       # DOCLING_OCR_PIPELINE: "standard" # Optional, defaults to "vlm"
@@ -694,7 +696,13 @@ For best results with the enhanced OCR features:
 | `LLM_BACKOFF_MAX_WAIT`              | Maximum wait time between retries for the main LLM (e.g., `30s`).                                                                                                                             | No       | 30s                        |
 | `SUGGESTION_WORKERS`                | Number of async manual suggestion workers. Keep this at `1` for slow or local LLM backends to avoid concurrent generation overload.                                                           | No       | 1                          |
 | `SUGGESTION_JOB_TIMEOUT_SECONDS`    | Optional timeout for async manual suggestion jobs. Leave unset to disable; set a bounded value for slow local inference when jobs must not run forever.                                      | No       |                            |
-| `OCR_PROVIDER`                      | OCR provider to use (`llm`, `azure`, `google_docai`, `docling`, or `mistral_ocr`).                                                                                                             | No       | llm                        |
+| `OCR_PROVIDER`                      | OCR provider to use (`llm`, `azure`, `google_docai`, `docling`, `mistral_ocr`, or local `tesseract`).
+| `TESSERACT_BINARY`                 | Local Tesseract executable when `OCR_PROVIDER` is `tesseract`.                                                                                           | No       | tesseract                  |
+| `TESSERACT_LANGUAGES`              | Allowlisted language codes joined with `+`; the image includes `deu+eng`.                                                                               | No       | deu+eng                    |
+| `TESSERACT_TIMEOUT_SECONDS`        | Per-page local execution timeout (1-600 seconds).                                                                                                        | No       | 60                         |
+| `TESSERACT_PSM`                    | Tesseract page segmentation mode (3-13).                                                                                                                 | No       | 3                          |
+| `TESSERACT_MAX_OUTPUT_BYTES`       | Maximum hOCR output accepted per page.                                                                                                                   | No       | 8388608                   |
+                                                                                                             | No       | llm                        |
 | `OCR_PROCESS_MODE`                  | Method for processing documents: `image` (convert to images first), `pdf` (process PDF pages directly), or `whole_pdf` (entire PDF at once).                                                  | No       | image                      |
 | `VISION_LLM_PROVIDER`               | AI backend for LLM OCR (`openai`, `ollama`, `mistral`, or `anthropic`). Required if OCR_PROVIDER is `llm`.                                                                                    | Cond.    |                            |
 | `VISION_LLM_MODEL`                  | Model name for LLM OCR (e.g. `minicpm-v`). Required if OCR_PROVIDER is `llm`.                                                                                                                 | Cond.    |                            |

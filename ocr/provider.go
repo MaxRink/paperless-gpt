@@ -36,7 +36,7 @@ type Provider interface {
 
 // Config holds the OCR provider configuration
 type Config struct {
-	// Provider type (e.g., "llm", "google_docai", "azure", "mistral_ocr")
+	// Provider type (e.g., "llm", "google_docai", "azure", "docling", "tesseract")
 	Provider string
 
 	// Mistral OCR settings
@@ -80,6 +80,13 @@ type Config struct {
 	DoclingOCRPipeline     string // Optional, defaults to "vlm"
 	DoclingOCREngine       string // Optional, defaults to "easyocr", if DoclingOCRPipeline == "standard"
 	DoclingOutputFormat    string // Optional, "md" (default) or "text"
+
+	// Local Tesseract settings
+	TesseractBinary         string
+	TesseractLanguages      string
+	TesseractTimeoutSeconds int
+	TesseractPSM            int
+	TesseractMaxOutputBytes int
 
 	// OCR output options
 	EnableHOCR     bool   // Whether to generate hOCR data if supported by the provider
@@ -144,6 +151,10 @@ func NewProvider(config Config) (Provider, error) {
 
 		log.WithField("url", config.DoclingURL).Info("Using Docling provider")
 		return newDoclingProvider(config)
+
+	case "tesseract":
+		log.WithFields(logrus.Fields{"binary": config.TesseractBinary, "languages": config.TesseractLanguages}).Info("Using local Tesseract hOCR provider")
+		return newTesseractProvider(config)
 
 	case "mistral_ocr":
 		if config.MistralAPIKey == "" {

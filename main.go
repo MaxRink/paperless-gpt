@@ -95,6 +95,8 @@ var (
 	doclingOCRPipeline            = os.Getenv("DOCLING_OCR_PIPELINE")
 	doclingOCREngine              = os.Getenv("DOCLING_OCR_ENGINE")
 	doclingOutputFormat           = os.Getenv("DOCLING_OUTPUT_FORMAT")
+	tesseractBinary               = os.Getenv("TESSERACT_BINARY")
+	tesseractLanguages            = os.Getenv("TESSERACT_LANGUAGES")
 	googleThinkingBudget          *int32 // Will be parsed from GOOGLEAI_THINKING_BUDGET
 
 	// Templates
@@ -384,6 +386,29 @@ func main() {
 		}
 	}
 
+	var tesseractTimeoutSeconds, tesseractPSM, tesseractMaxOutputBytes int
+	if value := os.Getenv("TESSERACT_TIMEOUT_SECONDS"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			tesseractTimeoutSeconds = parsed
+		} else {
+			log.Warnf("Invalid TESSERACT_TIMEOUT_SECONDS value: %v, using provider default", err)
+		}
+	}
+	if value := os.Getenv("TESSERACT_PSM"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			tesseractPSM = parsed
+		} else {
+			log.Warnf("Invalid TESSERACT_PSM value: %v, using provider default", err)
+		}
+	}
+	if value := os.Getenv("TESSERACT_MAX_OUTPUT_BYTES"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			tesseractMaxOutputBytes = parsed
+		} else {
+			log.Warnf("Invalid TESSERACT_MAX_OUTPUT_BYTES value: %v, using provider default", err)
+		}
+	}
+
 	ocrConfig := ocr.Config{
 		Provider:                 providerType,
 		GoogleProjectID:          os.Getenv("GOOGLE_PROJECT_ID"),
@@ -405,6 +430,11 @@ func main() {
 		DoclingOCRPipeline:       doclingOCRPipeline,
 		DoclingOCREngine:         doclingOCREngine,
 		DoclingOutputFormat:      doclingOutputFormat,
+		TesseractBinary:          tesseractBinary,
+		TesseractLanguages:       tesseractLanguages,
+		TesseractTimeoutSeconds:  tesseractTimeoutSeconds,
+		TesseractPSM:             tesseractPSM,
+		TesseractMaxOutputBytes:  tesseractMaxOutputBytes,
 		EnableHOCR:               true, // Always generate hOCR struct if provider supports it
 		VisionLLMMaxTokens:       visionLlmMaxTokens,
 		VisionLLMTemperature:     visionLlmTemperature,
@@ -765,6 +795,7 @@ func validateOCRProviderModeCompatibility(provider, mode, visionProvider string)
 		"google_docai": {"image", "pdf", "whole_pdf"}, // Google Document AI supports all modes
 		"mistral_ocr":  {"image", "pdf", "whole_pdf"}, // Mistral OCR supports all modes
 		"docling":      {"image", "pdf", "whole_pdf"}, // Docling supports image and PDF modes
+		"tesseract":    {"image"},                     // Local Tesseract processes rendered pages
 	}
 
 	// Google Gemini API natively handles PDF documents
