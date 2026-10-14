@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	_ "image/jpeg"
+	"io"
 	"net/http"
 	"os"
 	"testing"
@@ -14,6 +15,58 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type testPageWriteCloser struct {
+	writeErr error
+	closeErr error
+	closed   bool
+}
+
+func (f *testPageWriteCloser) Write(data []byte) (int, error) {
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
+	return len(data), nil
+}
+
+func (f *testPageWriteCloser) Close() error {
+	f.closed = true
+	return f.closeErr
+}
+
+func TestWritePageFileClosesOnWriteAndCloseErrors(t *testing.T) {
+	writeErr := fmt.Errorf("write failed")
+	closeErr := fmt.Errorf("close failed")
+
+	tests := []struct {
+		name       string
+		file       *testPageWriteCloser
+		wantErr    error
+		wantSubstr string
+	}{
+		{name: "write error", file: &testPageWriteCloser{writeErr: writeErr}, wantErr: writeErr, wantSubstr: "write page"},
+		{name: "close error", file: &testPageWriteCloser{closeErr: closeErr}, wantErr: closeErr, wantSubstr: "close page"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := writePageFile("page.jpg", []byte("page"), func(string) (io.WriteCloser, error) {
+				return tt.file, nil
+			})
+			require.Error(t, err)
+			assert.ErrorIs(t, err, tt.wantErr)
+			assert.Contains(t, err.Error(), tt.wantSubstr)
+			assert.True(t, tt.file.closed)
+		})
+	}
+}
+
+func TestDownloadDocumentAsImagesHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	client := NewPaperlessClient("http://127.0.0.1:1", "test-token")
+	_, _, err := client.DownloadDocumentAsImages(ctx, 996, 0)
+	require.ErrorIs(t, err, context.Canceled)
+}
 
 // onePixelPNG is a minimal 1x1 PNG used to simulate a non-PDF original served
 // when PAPERLESS_ARCHIVE_FILE_GENERATION=never.
