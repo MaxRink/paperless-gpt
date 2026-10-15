@@ -43,16 +43,17 @@ type PaperlessClient struct {
 	// Catalogs change infrequently but are needed by every document read and
 	// suggestion batch. Keep a short-lived per-client snapshot so a UI refresh
 	// does not refetch every page of tags/correspondents/types.
-	tagsMu                 sync.Mutex
-	tagCreationMu          sync.Mutex
-	tagsCache              map[string]int
-	tagsCachedAt           time.Time
-	correspondentsMu       sync.Mutex
-	correspondentsCache    map[string]int
-	correspondentsCachedAt time.Time
-	documentTypesMu        sync.Mutex
-	documentTypesCache     []DocumentType
-	documentTypesCachedAt  time.Time
+	tagsMu                  sync.Mutex
+	tagCreationMu           sync.Mutex
+	correspondentCreationMu sync.Mutex
+	tagsCache               map[string]int
+	tagsCachedAt            time.Time
+	correspondentsMu        sync.Mutex
+	correspondentsCache     map[string]int
+	correspondentsCachedAt  time.Time
+	documentTypesMu         sync.Mutex
+	documentTypesCache      []DocumentType
+	documentTypesCachedAt   time.Time
 }
 
 const catalogCacheTTL = 30 * time.Second
@@ -1918,6 +1919,12 @@ func instantiateCorrespondent(name string) Correspondent {
 
 // CreateOrGetCorrespondent creates a new correspondent or returns existing one if name already exists
 func (client *PaperlessClient) CreateOrGetCorrespondent(ctx context.Context, correspondent Correspondent) (int, error) {
+	// Paperless does not provide an idempotency key for correspondent creation.
+	// Serialize the lookup/create pair per client so concurrent workflow batches
+	// cannot both observe a missing correspondent and create duplicates.
+	client.correspondentCreationMu.Lock()
+	defer client.correspondentCreationMu.Unlock()
+
 	// First try to find existing correspondent
 	correspondents, err := client.GetAllCorrespondents(ctx)
 	if err != nil {
