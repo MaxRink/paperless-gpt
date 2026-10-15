@@ -249,6 +249,20 @@ func TestRateLimitedLLM_Call_Error(t *testing.T) {
 	assert.Equal(t, 4, mockLLM.callIndex, "Should have made 1 initial + 3 retry calls")
 }
 
+func TestRateLimitedLLM_CallClassifiesFinalAttempt(t *testing.T) {
+	mockLLM := &rateLimitMockLLM{
+		callResponses: []string{"", ""},
+		callErrors:    []error{errors.New("HTTP 400 invalid request"), errors.New("HTTP 429 rate limit")},
+	}
+	rated := NewRateLimitedLLM(mockLLM, RateLimitConfig{MaxRetries: 1, BackoffMaxWait: time.Millisecond})
+	_, err := rated.Call(context.Background(), "test prompt")
+	var retryErr *RetryExhaustedError
+	require.ErrorAs(t, err, &retryErr)
+	require.Equal(t, 2, retryErr.Attempts)
+	require.ErrorContains(t, retryErr, "all retry attempts failed")
+	require.ErrorContains(t, retryErr.Err, "429")
+}
+
 func TestRateLimitedLLM_Call_EventualSuccess(t *testing.T) {
 	mockLLM := newEventuallySuccessfulRateLimitMock(2) // Fail twice, succeed on third try
 	config := RateLimitConfig{

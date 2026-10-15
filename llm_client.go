@@ -70,7 +70,6 @@ func (r *RateLimitedLLM) Call(ctx context.Context, prompt string, options ...llm
 		}
 	}
 
-	var lastErr error
 	attempt := 0
 
 	for {
@@ -81,13 +80,10 @@ func (r *RateLimitedLLM) Call(ctx context.Context, prompt string, options ...llm
 
 		// Check if we should retry
 		if attempt >= r.maxRetries {
-			if lastErr != nil {
-				if retryableLLMFailure(lastErr) {
-					return "", &RetryExhaustedError{Attempts: attempt + 1, RetryAfter: retryDelay(lastErr, 0), Err: lastErr}
-				}
-				return "", fmt.Errorf("all retry attempts failed, last error: %w", lastErr)
+			if retryableLLMFailure(err) {
+				return "", &RetryExhaustedError{Attempts: attempt + 1, RetryAfter: retryDelay(err, 0), Err: err}
 			}
-			return "", err
+			return "", fmt.Errorf("all retry attempts failed, last error: %w", err)
 		}
 
 		// Calculate exponential backoff with jitter
@@ -110,7 +106,6 @@ func (r *RateLimitedLLM) Call(ctx context.Context, prompt string, options ...llm
 		case <-time.After(jitter):
 			// Continue with retry
 			attempt++
-			lastErr = err
 		}
 	}
 }
@@ -177,7 +172,6 @@ func (r *RateLimitedLLM) GenerateContent(ctx context.Context, messages []llms.Me
 		}
 	}
 
-	var lastErr error
 	attempt := 0
 
 	for {
@@ -200,13 +194,10 @@ func (r *RateLimitedLLM) GenerateContent(ctx context.Context, messages []llms.Me
 
 		// Check if we should retry
 		if attempt >= r.maxRetries {
-			if lastErr != nil {
-				if retryableLLMFailure(lastErr) {
-					return nil, &RetryExhaustedError{Attempts: attempt + 1, RetryAfter: retryDelay(lastErr, 0), Err: lastErr}
-				}
-				return nil, fmt.Errorf("all retry attempts failed, last error: %w", lastErr)
+			if retryableLLMFailure(err) {
+				return nil, &RetryExhaustedError{Attempts: attempt + 1, RetryAfter: retryDelay(err, 0), Err: err}
 			}
-			return nil, err
+			return nil, fmt.Errorf("all retry attempts failed, last error: %w", err)
 		}
 
 		// Calculate exponential backoff with jitter
@@ -227,7 +218,6 @@ func (r *RateLimitedLLM) GenerateContent(ctx context.Context, messages []llms.Me
 		case <-time.After(jitter):
 			// Continue with retry
 			attempt++
-			lastErr = err
 		}
 	}
 }
