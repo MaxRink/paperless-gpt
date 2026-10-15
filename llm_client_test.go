@@ -166,9 +166,9 @@ func newFailingRateLimitMock() *rateLimitMockLLM {
 	// Fill arrays with error responses
 	for i := 0; i < 4; i++ {
 		callResponses[i] = ""
-		callErrors[i] = errors.New("mock error")
+		callErrors[i] = errors.New("HTTP 503 mock error")
 		generateResponses[i] = nil
-		generateErrors[i] = errors.New("mock error")
+		generateErrors[i] = errors.New("HTTP 503 mock error")
 	}
 
 	return &rateLimitMockLLM{
@@ -189,9 +189,9 @@ func newEventuallySuccessfulRateLimitMock(failCount int) *rateLimitMockLLM {
 	// Set up failures for the specified count
 	for i := 0; i < failCount; i++ {
 		callResponses[i] = ""
-		callErrors[i] = errors.New("mock error")
+		callErrors[i] = errors.New("HTTP 503 mock error")
 		generateResponses[i] = nil
-		generateErrors[i] = errors.New("mock error")
+		generateErrors[i] = errors.New("HTTP 503 mock error")
 	}
 
 	// Set up success for the last item
@@ -252,7 +252,7 @@ func TestRateLimitedLLM_Call_Error(t *testing.T) {
 func TestRateLimitedLLM_CallClassifiesFinalAttempt(t *testing.T) {
 	mockLLM := &rateLimitMockLLM{
 		callResponses: []string{"", ""},
-		callErrors:    []error{errors.New("HTTP 400 invalid request"), errors.New("HTTP 429 rate limit")},
+		callErrors:    []error{errors.New("HTTP 429 rate limit"), errors.New("HTTP 503 service unavailable")},
 	}
 	rated := NewRateLimitedLLM(mockLLM, RateLimitConfig{MaxRetries: 1, BackoffMaxWait: time.Millisecond})
 	_, err := rated.Call(context.Background(), "test prompt")
@@ -260,7 +260,19 @@ func TestRateLimitedLLM_CallClassifiesFinalAttempt(t *testing.T) {
 	require.ErrorAs(t, err, &retryErr)
 	require.Equal(t, 2, retryErr.Attempts)
 	require.ErrorContains(t, retryErr, "all retry attempts failed")
-	require.ErrorContains(t, retryErr.Err, "429")
+	require.ErrorContains(t, retryErr.Err, "503")
+}
+
+func TestRateLimitedLLM_CallDoesNotRetryPermanentFailure(t *testing.T) {
+	mockLLM := &rateLimitMockLLM{
+		callResponses: []string{""},
+		callErrors:    []error{errors.New("HTTP 401 unauthorized")},
+	}
+	rated := NewRateLimitedLLM(mockLLM, RateLimitConfig{MaxRetries: 3, BackoffMaxWait: time.Millisecond})
+	_, err := rated.Call(context.Background(), "test prompt")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "LLM request failed")
+	require.Equal(t, 1, mockLLM.callIndex)
 }
 
 func TestRateLimitedLLM_Call_EventualSuccess(t *testing.T) {
