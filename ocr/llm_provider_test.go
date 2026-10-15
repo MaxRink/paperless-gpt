@@ -1,6 +1,7 @@
 package ocr
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -106,6 +107,22 @@ func (r *recordingRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		r.body, _ = io.ReadAll(req.Body)
 	}
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`)), Header: http.Header{}, Request: req}, nil
+}
+
+func TestOpenAIHTTPClientForwardsRequestCorrelation(t *testing.T) {
+	rec := &recordingRoundTripper{}
+	previous := http.DefaultTransport
+	http.DefaultTransport = rec
+	t.Cleanup(func() { http.DefaultTransport = previous })
+
+	ctx := WithRequestCorrelation(context.Background(), "safe.request-1", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://llm.example/v1/chat/completions", strings.NewReader(`{"model":"m"}`))
+	require.NoError(t, err)
+	resp, err := OpenAIHTTPClient().Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, "safe.request-1", rec.header.Get("X-Request-ID"))
+	assert.Equal(t, "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", rec.header.Get("traceparent"))
 }
 
 // The shared OpenAI-compatible client (text LLM, vision LLM, LLM OCR) adds

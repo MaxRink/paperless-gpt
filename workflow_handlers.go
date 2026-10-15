@@ -132,7 +132,7 @@ func (app *App) workflowPreviewHandler(c *gin.Context) {
 	request := resolveGenerationFlags(globalAutoProcessingRequest(doc), wf)
 	request.Workflow = &wf
 	request.IsAutoProcessing = false // a preview hands over no tags
-	suggestions, err := app.generateDocumentSuggestions(ctx, request, documentLogger(doc.ID))
+	suggestions, err := app.generateDocumentSuggestions(ctx, request, requestLogger(ctx).WithField("document_id", doc.ID))
 	if err != nil || len(suggestions) == 0 {
 		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("The LLM call failed: %v", err)})
 		return
