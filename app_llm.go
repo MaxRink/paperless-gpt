@@ -63,6 +63,9 @@ func (app *App) getSuggestedCorrespondent(ctx context.Context, content string, s
 	prompt := promptBuffer.String()
 	log.Debugf("Correspondent suggestion prompt: %s", prompt)
 
+	// Correspondent suggestions are a single name (or "Unknown"). Keep the
+	// output reservation small so local fallback models can accept the full
+	// bounded document prompt without exhausting their context window.
 	completion, err := app.LLM.GenerateContent(ctx, []llms.MessageContent{
 		{
 			Parts: []llms.ContentPart{
@@ -72,7 +75,7 @@ func (app *App) getSuggestedCorrespondent(ctx context.Context, content string, s
 			},
 			Role: llms.ChatMessageTypeHuman,
 		},
-	})
+	}, llms.WithMaxTokens(512))
 	if err != nil {
 		return "", fmt.Errorf("error getting response from LLM: %v", err)
 	}

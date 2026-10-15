@@ -12,6 +12,7 @@ import (
 	"testing"
 	"text/template"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,9 +23,10 @@ import (
 
 // Mock LLM for testing
 type mockLLM struct {
-	lastPrompt string
-	Response   string
-	Error      error
+	lastPrompt    string
+	lastMaxTokens int
+	Response      string
+	Error         error
 }
 
 func (m *mockLLM) CreateEmbedding(_ context.Context, texts []string) ([][]float32, error) {
@@ -43,6 +45,11 @@ func (m *mockLLM) Call(ctx context.Context, prompt string, options ...llms.CallO
 }
 
 func (m *mockLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	callOptions := llms.CallOptions{}
+	for _, option := range options {
+		option(&callOptions)
+	}
+	m.lastMaxTokens = callOptions.MaxTokens
 	if len(messages) > 0 && len(messages[0].Parts) > 0 {
 		if textContent, ok := messages[0].Parts[0].(llms.TextContent); ok {
 			m.lastPrompt = textContent.Text
@@ -214,8 +221,9 @@ func TestTokenLimitInCorrespondentGeneration(t *testing.T) {
 	ctx := context.Background()
 	availableCorrespondents := []string{"Test Corp", "Example Inc"}
 	correspondentBlackList := []string{"Blocked Corp"}
+	correspondentTemplate := template.Must(template.New("correspondent-test").Parse(testCorrespondentTemplate))
 
-	_, err := app.getSuggestedCorrespondent(ctx, longContent, "Test Title", availableCorrespondents, correspondentBlackList, nil)
+	_, err := app.getSuggestedCorrespondent(ctx, longContent, "Test Title", availableCorrespondents, correspondentBlackList, correspondentTemplate)
 	require.NoError(t, err)
 
 	// Verify the final prompt size
@@ -225,6 +233,45 @@ func TestTokenLimitInCorrespondentGeneration(t *testing.T) {
 
 	// Final prompt should be within token limit
 	assert.LessOrEqual(t, len(tokens), 50, "Final prompt should be within token limit")
+}
+
+func TestCorrespondentGenerationBoundsOutputTokens(t *testing.T) {
+	mock := &mockLLM{}
+	app := &App{LLM: mock}
+	correspondentTemplate := template.Must(template.New("correspondent-test").Parse(testCorrespondentTemplate))
+	_, err := app.getSuggestedCorrespondent(context.Background(), "Example Corp invoice", "Invoice", []string{"Example Corp"}, nil, correspondentTemplate)
+	require.NoError(t, err)
+	assert.Equal(t, 512, mock.lastMaxTokens, "correspondent suggestions need a bounded local-model output reservation")
+}
+
+func TestDefaultCorrespondentPromptPreservesExactCatalogName(t *testing.T) {
+	originalLimit := os.Getenv("TOKEN_LIMIT")
+	t.Cleanup(func() {
+		_ = os.Setenv("TOKEN_LIMIT", originalLimit)
+		resetTokenLimit()
+	})
+	_ = os.Setenv("TOKEN_LIMIT", "0")
+	resetTokenLimit()
+
+	promptBytes, err := os.ReadFile("default_prompts/correspondent_prompt.tmpl")
+	require.NoError(t, err)
+	tmpl, err := template.New("correspondent").Funcs(sprig.FuncMap()).Parse(string(promptBytes))
+	require.NoError(t, err)
+
+	mock := &mockLLM{Response: "Microsoft Ireland Operations Limited"}
+	app := &App{LLM: mock}
+	_, err = app.getSuggestedCorrespondent(
+		context.Background(),
+		"Invoice from Microsoft Ireland Operations Limited",
+		"Invoice",
+		[]string{"Microsoft Ireland Operations Limited"},
+		nil,
+		tmpl,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, mock.lastPrompt, "Microsoft Ireland Operations Limited")
+	assert.Contains(t, mock.lastPrompt, "return that exact name")
+	assert.NotContains(t, mock.lastPrompt, "use \"Microsoft\" instead")
 }
 
 func TestTokenLimitInTagGeneration(t *testing.T) {

@@ -192,6 +192,207 @@ func TestGetAllTags(t *testing.T) {
 	assert.Equal(t, 2, env.requestCount)
 }
 
+func TestCatalogCachesAvoidRepeatedLookupsAndReturnCopies(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.teardown()
+	var tagsCalls, correspondentCalls, documentTypeCalls int
+	env.setMockResponse("/api/tags/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("name__iexact") != "" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"count":0,"results":[]}`))
+			return
+		}
+		tagsCalls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"id":1,"name":"Invoice"}],"next":null}`))
+	})
+	env.setMockResponse("/api/correspondents/", func(w http.ResponseWriter, r *http.Request) {
+		correspondentCalls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"id":2,"name":"Vendor"}]}`))
+	})
+	env.setMockResponse("/api/document_types/", func(w http.ResponseWriter, r *http.Request) {
+		documentTypeCalls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[{"id":3,"name":"Receipt"}]}`))
+	})
+
+	ctx := context.Background()
+	firstTags, err := env.client.GetAllTags(ctx)
+	require.NoError(t, err)
+	firstTags["Injected"] = 99
+	secondTags, err := env.client.GetAllTags(ctx)
+	require.NoError(t, err)
+	firstCorrespondents, err := env.client.GetAllCorrespondents(ctx)
+	require.NoError(t, err)
+	firstCorrespondents["Injected"] = 99
+	secondCorrespondents, err := env.client.GetAllCorrespondents(ctx)
+	require.NoError(t, err)
+	firstTypes, err := env.client.GetAllDocumentTypes(ctx)
+	require.NoError(t, err)
+	firstTypes[0].Name = "Injected"
+	secondTypes, err := env.client.GetAllDocumentTypes(ctx)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, tagsCalls)
+	assert.Equal(t, 1, correspondentCalls)
+	assert.Equal(t, 1, documentTypeCalls)
+	assert.Equal(t, map[string]int{"Invoice": 1}, secondTags)
+	assert.Equal(t, map[string]int{"Vendor": 2}, secondCorrespondents)
+	assert.Equal(t, []DocumentType{{ID: 3, Name: "Receipt"}}, secondTypes)
+}
+
+func TestCreateCorrespondentInvalidatesCacheBeforeMalformedResponse(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.teardown()
+	getCalls := 0
+	postCalls := 0
+	env.setMockResponse("/api/correspondents/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			postCalls++
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		getCalls++
+		w.WriteHeader(http.StatusOK)
+		if getCalls == 1 {
+			_, _ = w.Write([]byte(`{"results":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"id":42,"name":"Acme GmbH"}]}`))
+	})
+
+	_, err := env.client.CreateOrGetCorrespondent(context.Background(), Correspondent{Name: "Acme GmbH"})
+	require.Error(t, err)
+	assert.Equal(t, 1, getCalls)
+	assert.Equal(t, 1, postCalls)
+
+	id, err := env.client.CreateOrGetCorrespondent(context.Background(), Correspondent{Name: "Acme GmbH"})
+	require.NoError(t, err)
+	assert.Equal(t, 42, id)
+	assert.Equal(t, 2, getCalls, "the malformed successful response must not leave a cached negative result")
+}
+
+func TestCreateTagInvalidatesCacheBeforeMalformedResponse(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.teardown()
+	getCalls := 0
+	postCalls := 0
+	env.setMockResponse("/api/tags/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			postCalls++
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		getCalls++
+		w.WriteHeader(http.StatusOK)
+		if getCalls == 1 {
+			_, _ = w.Write([]byte(`{"results":[],"next":null}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"id":42,"name":"handoff"}],"next":null}`))
+	})
+
+	_, err := env.client.GetAllTags(context.Background())
+	require.NoError(t, err)
+	_, err = env.client.CreateTag(context.Background(), "handoff")
+	require.Error(t, err)
+	assert.Equal(t, 1, getCalls)
+	assert.Equal(t, 1, postCalls)
+
+	tags, err := env.client.GetAllTags(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"handoff": 42}, tags)
+	assert.Equal(t, 2, getCalls, "a malformed successful response must not leave a stale negative tag cache")
+}
+
+func TestCreateOrGetTagSerializesConcurrentCreation(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.teardown()
+	var mu sync.Mutex
+	created := false
+	posts := 0
+	env.setMockResponse("/api/tags/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodPost {
+			posts++
+			if created {
+				http.Error(w, "duplicate", http.StatusConflict)
+				return
+			}
+			created = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":42}`))
+			return
+		}
+		if created {
+			_, _ = w.Write([]byte(`{"results":[{"id":42,"name":"handoff"}],"next":null}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[],"next":null}`))
+	})
+
+	results := make(chan int, 2)
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			id, err := env.client.CreateOrGetTag(context.Background(), "handoff")
+			results <- id
+			errs <- err
+		}()
+	}
+	for range 2 {
+		assert.NoError(t, <-errs)
+		assert.Equal(t, 42, <-results)
+	}
+	assert.Equal(t, 1, posts)
+}
+
+func TestUpdateDocumentsReusesCreatedCorrespondentInBatch(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.teardown()
+	createCalls := 0
+	patchCalls := 0
+	env.setMockResponse("/api/tags/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[],"next":null}`))
+	})
+	env.setMockResponse("/api/correspondents/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			createCalls++
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":42}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	})
+	env.setMockResponse("/api/document_types/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	})
+	for _, id := range []int{1, 2} {
+		documentID := id
+		env.setMockResponse(fmt.Sprintf("/api/documents/%d/", documentID), func(w http.ResponseWriter, r *http.Request) {
+			patchCalls++
+			var body map[string]interface{}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, float64(42), body["correspondent"])
+			w.WriteHeader(http.StatusOK)
+		})
+	}
+	documents := []DocumentSuggestion{
+		{ID: 1, OriginalDocument: Document{ID: 1}, SuggestedCorrespondent: "New Vendor"},
+		{ID: 2, OriginalDocument: Document{ID: 2}, SuggestedCorrespondent: "New Vendor"},
+	}
+	require.NoError(t, env.client.UpdateDocuments(context.Background(), documents, env.db, false))
+	assert.Equal(t, 1, createCalls)
+	assert.Equal(t, 2, patchCalls)
+}
+
 // TestGetDocumentCountByTag tests the GetDocumentCountByTag method
 func TestGetDocumentCountByTag(t *testing.T) {
 	env := newTestEnv(t)
@@ -325,6 +526,38 @@ func TestGetDocumentsByTag(t *testing.T) {
 	}
 
 	assert.Equal(t, expectedDocuments, documents)
+}
+
+func TestGetDocumentsByTagRefreshesTagCatalogOnlyOnce(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.teardown()
+
+	env.setMockResponse("/api/documents/", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(GetDocumentsApiResponse{Results: []GetDocumentApiResponseResult{
+			{ID: 1, Title: "Document 1", Tags: []int{1, 99}},
+			{ID: 2, Title: "Document 2", Tags: []int{2, 100}},
+		}})
+	})
+
+	var catalogCalls int
+	env.setMockResponse("/api/tags/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("name__iexact") != "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{"results": []map[string]interface{}{{"document_count": 2}}, "count": 1})
+			return
+		}
+		catalogCalls++
+		results := []map[string]interface{}{{"id": 1, "name": "tag1"}, {"id": 2, "name": "tag2"}}
+		if catalogCalls == 2 {
+			results = append(results, map[string]interface{}{"id": 99, "name": "tag99"}, map[string]interface{}{"id": 100, "name": "tag100"})
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"results": results, "next": nil})
+	})
+
+	documents, err := env.client.GetDocumentsByTag(context.Background(), "tag2", 25)
+	require.NoError(t, err)
+	assert.Equal(t, 2, catalogCalls)
+	assert.Equal(t, []string{"tag1", "tag99"}, documents[0].Tags)
+	assert.Equal(t, []string{"tag2", "tag100"}, documents[1].Tags)
 }
 
 // TestGetDocumentsByTagWithEmoji tests the GetDocumentsByTag method with emoji and special characters

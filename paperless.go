@@ -39,6 +39,34 @@ type PaperlessClient struct {
 	APIToken    string
 	HTTPClient  *http.Client
 	CacheFolder string
+
+	// Catalogs change infrequently but are needed by every document read and
+	// suggestion batch. Keep a short-lived per-client snapshot so a UI refresh
+	// does not refetch every page of tags/correspondents/types.
+	tagsMu                 sync.Mutex
+	tagCreationMu          sync.Mutex
+	tagsCache              map[string]int
+	tagsCachedAt           time.Time
+	correspondentsMu       sync.Mutex
+	correspondentsCache    map[string]int
+	correspondentsCachedAt time.Time
+	documentTypesMu        sync.Mutex
+	documentTypesCache     []DocumentType
+	documentTypesCachedAt  time.Time
+}
+
+const catalogCacheTTL = 30 * time.Second
+
+func copyCatalogMap(in map[string]int) map[string]int {
+	out := make(map[string]int, len(in))
+	for name, id := range in {
+		out[name] = id
+	}
+	return out
+}
+
+func copyDocumentTypes(in []DocumentType) []DocumentType {
+	return append([]DocumentType(nil), in...)
 }
 
 // CustomField represents a custom field from the Paperless-ngx API
@@ -82,6 +110,19 @@ type DocumentType struct {
 // paperless-ngx actually holds rather than the user's variant.
 func lookupTagID(availableTags map[string]int, tagName string) (string, int, bool) {
 	return lookupNamedID("Tag", availableTags, tagName)
+}
+
+func hasUnresolvedTagIDs(tagIDs []int, tags map[string]int) bool {
+	known := make(map[int]struct{}, len(tags))
+	for _, id := range tags {
+		known[id] = struct{}{}
+	}
+	for _, id := range tagIDs {
+		if _, ok := known[id]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // isNoMatchCorrespondent recognizes explicit no-match values from the
@@ -265,6 +306,12 @@ func (client *PaperlessClient) Do(ctx context.Context, method, path string, body
 
 // GetAllTags retrieves all tags from the Paperless-NGX API
 func (client *PaperlessClient) GetAllTags(ctx context.Context) (map[string]int, error) {
+	client.tagsMu.Lock()
+	defer client.tagsMu.Unlock()
+	if client.tagsCache != nil && time.Since(client.tagsCachedAt) < catalogCacheTTL {
+		return copyCatalogMap(client.tagsCache), nil
+	}
+
 	tagIDMapping := make(map[string]int)
 	// Paperless defaults to 25 results per page. This helper is used during
 	// startup for marker-tag checks, so asking for a larger page size avoids
@@ -322,7 +369,9 @@ func (client *PaperlessClient) GetAllTags(ctx context.Context) (map[string]int, 
 		}
 	}
 
-	return tagIDMapping, nil
+	client.tagsCache = tagIDMapping
+	client.tagsCachedAt = time.Now()
+	return copyCatalogMap(tagIDMapping), nil
 }
 
 // GetDocumentCountByTag checks if there is a document for the specified tag (it is much faster than api/documents/)
@@ -407,15 +456,24 @@ func (client *PaperlessClient) GetDocumentsByTag(ctx context.Context, tag string
 	if err != nil {
 		return nil, err
 	}
-
 	allCorrespondents, err := client.GetAllCorrespondents(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	documents := make([]Document, 0, len(documentsResponse.Results))
+	refreshedTagCatalog := false
 	for _, result := range documentsResponse.Results {
 		tagNames, invisibleTagIDs := resolveTagNames(result.Tags, allTags)
+		if len(invisibleTagIDs) > 0 && !refreshedTagCatalog {
+			client.invalidateTagCatalog()
+			allTags, err = client.GetAllTags(ctx)
+			if err != nil {
+				return nil, err
+			}
+			refreshedTagCatalog = true
+			tagNames, invisibleTagIDs = resolveTagNames(result.Tags, allTags)
+		}
 		if len(invisibleTagIDs) > 0 {
 			log.Warnf("Document %d has tag IDs %v that are not visible to the API user; they will be preserved but cannot be managed.", result.ID, invisibleTagIDs)
 		}
@@ -519,6 +577,13 @@ func (client *PaperlessClient) GetDocument(ctx context.Context, documentID int) 
 	allTags, err := client.GetAllTags(ctx)
 	if err != nil {
 		return Document{}, err
+	}
+	if hasUnresolvedTagIDs(documentResponse.Tags, allTags) {
+		client.invalidateTagCatalog()
+		allTags, err = client.GetAllTags(ctx)
+		if err != nil {
+			return Document{}, err
+		}
 	}
 
 	allCorrespondents, err := client.GetAllCorrespondents(ctx)
@@ -651,6 +716,20 @@ func (client *PaperlessClient) UpdateDocuments(ctx context.Context, documents []
 	for name, tagID := range availableTags {
 		idToTagName[tagID] = name
 	}
+	for _, document := range documents {
+		if hasUnresolvedTagIDs(document.OriginalDocument.TagIDs, availableTags) {
+			client.invalidateTagCatalog()
+			availableTags, err = client.GetAllTags(ctx)
+			if err != nil {
+				return fmt.Errorf("error refreshing available tags: %w", err)
+			}
+			idToTagName = make(map[int]string, len(availableTags))
+			for name, tagID := range availableTags {
+				idToTagName[tagID] = name
+			}
+			break
+		}
+	}
 
 	// Build a field-id -> data_type map once per call, lazily — only fetch
 	// when at least one document has suggested custom fields, so users who
@@ -782,7 +861,7 @@ func (client *PaperlessClient) UpdateDocuments(ctx context.Context, documents []
 					appliedTagNames = append(appliedTagNames, tagName)
 				} else if createNewTags {
 					// Create the new tag in paperless-ngx
-					newTagID, err := client.CreateTag(ctx, tagName)
+					newTagID, err := client.CreateOrGetTag(ctx, tagName)
 					if err != nil {
 						log.Warnf("Document %d: Failed to create new tag '%s': %v", documentID, tagName, err)
 						continue
@@ -844,6 +923,7 @@ func (client *PaperlessClient) UpdateDocuments(ctx context.Context, documents []
 					log.Warnf("Document %d: could not use correspondent %q, applying the other changes without it: %v", documentID, document.SuggestedCorrespondent, err)
 					partialDroppedFields = append(partialDroppedFields, "correspondent")
 				} else {
+					availableCorrespondents[newCorr.Name] = newCorrID
 					originalFields["correspondent"] = originalDoc.Correspondent
 					updatedFields["correspondent"] = newCorrID
 				}
@@ -1868,6 +1948,12 @@ func (client *PaperlessClient) CreateOrGetCorrespondent(ctx context.Context, cor
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return 0, fmt.Errorf("error creating correspondent: %d, %s", resp.StatusCode, string(bodyBytes))
 	}
+	// Invalidate before decoding: a malformed success body must not leave a
+	// stale absence cached after Paperless has already created the row.
+	client.correspondentsMu.Lock()
+	client.correspondentsCache = nil
+	client.correspondentsCachedAt = time.Time{}
+	client.correspondentsMu.Unlock()
 
 	var createdCorrespondent struct {
 		ID int `json:"id"`
@@ -1890,6 +1976,12 @@ type CorrespondentResponse struct {
 
 // GetAllCorrespondents retrieves all correspondents from the Paperless-NGX API
 func (client *PaperlessClient) GetAllCorrespondents(ctx context.Context) (map[string]int, error) {
+	client.correspondentsMu.Lock()
+	defer client.correspondentsMu.Unlock()
+	if client.correspondentsCache != nil && time.Since(client.correspondentsCachedAt) < catalogCacheTTL {
+		return copyCatalogMap(client.correspondentsCache), nil
+	}
+
 	correspondentIDMapping := make(map[string]int)
 	path := "api/correspondents/?page_size=9999"
 
@@ -1915,12 +2007,19 @@ func (client *PaperlessClient) GetAllCorrespondents(ctx context.Context) (map[st
 		correspondentIDMapping[correspondent.Name] = correspondent.ID
 	}
 
-	return correspondentIDMapping, nil
+	client.correspondentsCache = correspondentIDMapping
+	client.correspondentsCachedAt = time.Now()
+	return copyCatalogMap(correspondentIDMapping), nil
 }
 
 // GetAllDocumentTypes retrieves all document types from the Paperless-NGX API
 func (client *PaperlessClient) GetAllDocumentTypes(ctx context.Context) ([]DocumentType, error) {
-	var allDocumentTypes []DocumentType
+	client.documentTypesMu.Lock()
+	defer client.documentTypesMu.Unlock()
+	if client.documentTypesCache != nil && time.Since(client.documentTypesCachedAt) < catalogCacheTTL {
+		return copyDocumentTypes(client.documentTypesCache), nil
+	}
+
 	path := "api/document_types/?page_size=1000" // Assuming a reasonable limit
 
 	resp, err := client.Do(ctx, "GET", path, nil)
@@ -1943,9 +2042,12 @@ func (client *PaperlessClient) GetAllDocumentTypes(ctx context.Context) ([]Docum
 		return nil, err
 	}
 
+	allDocumentTypes := make([]DocumentType, 0, len(response.Results))
 	allDocumentTypes = append(allDocumentTypes, response.Results...)
 
-	return allDocumentTypes, nil
+	client.documentTypesCache = allDocumentTypes
+	client.documentTypesCachedAt = time.Now()
+	return copyDocumentTypes(allDocumentTypes), nil
 }
 
 // GetCustomFields retrieves all custom fields from the Paperless-NGX API
@@ -2078,6 +2180,11 @@ func (client *PaperlessClient) CreateTag(ctx context.Context, tagName string) (i
 		return 0, fmt.Errorf("error creating tag: %d, %s", resp.StatusCode, string(bodyBytes))
 	}
 
+	// A successful POST has already changed the upstream catalog. Drop the
+	// snapshot before decoding the response so a malformed 2xx body cannot
+	// leave a stale negative cache entry behind.
+	client.invalidateTagCatalog()
+
 	var createdTag struct {
 		ID int `json:"id"`
 	}
@@ -2086,7 +2193,34 @@ func (client *PaperlessClient) CreateTag(ctx context.Context, tagName string) (i
 		return 0, fmt.Errorf("error parsing created tag response: %w", err)
 	}
 
+	client.invalidateTagCatalog()
 	return createdTag.ID, nil
+}
+
+// CreateOrGetTag serializes the get-or-create operation for each client. The
+// catalog is refreshed while holding the lock so concurrent workers cannot
+// turn one missing tag into duplicate POST requests.
+func (client *PaperlessClient) CreateOrGetTag(ctx context.Context, tagName string) (int, error) {
+	client.tagCreationMu.Lock()
+	defer client.tagCreationMu.Unlock()
+
+	client.invalidateTagCatalog()
+	tags, err := client.GetAllTags(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("error fetching tags: %w", err)
+	}
+	if _, id, exists := lookupTagID(tags, tagName); exists {
+		return id, nil
+	}
+	return client.CreateTag(ctx, tagName)
+}
+
+// invalidateTagCatalog drops the short-lived snapshot after a tag mutation.
+func (client *PaperlessClient) invalidateTagCatalog() {
+	client.tagsMu.Lock()
+	client.tagsCache = nil
+	client.tagsCachedAt = time.Time{}
+	client.tagsMu.Unlock()
 }
 
 // EnsureTagExists checks whether a tag with the given name exists in paperless-ngx
@@ -2097,14 +2231,7 @@ func (client *PaperlessClient) EnsureTagExists(ctx context.Context, tagName stri
 	if tagName == "" {
 		return nil
 	}
-	tags, err := client.GetAllTags(ctx)
-	if err != nil {
-		return fmt.Errorf("error fetching tags: %w", err)
-	}
-	if _, exists := tags[tagName]; exists {
-		return nil
-	}
-	if _, err := client.CreateTag(ctx, tagName); err != nil {
+	if _, err := client.CreateOrGetTag(ctx, tagName); err != nil {
 		return fmt.Errorf("error creating tag %q: %w", tagName, err)
 	}
 	return nil
