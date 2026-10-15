@@ -82,6 +82,9 @@ func (r *RateLimitedLLM) Call(ctx context.Context, prompt string, options ...llm
 		// Check if we should retry
 		if attempt >= r.maxRetries {
 			if lastErr != nil {
+				if retryableLLMFailure(lastErr) {
+					return "", &RetryExhaustedError{Attempts: attempt + 1, RetryAfter: retryDelay(lastErr, 0), Err: lastErr}
+				}
 				return "", fmt.Errorf("all retry attempts failed, last error: %w", lastErr)
 			}
 			return "", err
@@ -198,6 +201,9 @@ func (r *RateLimitedLLM) GenerateContent(ctx context.Context, messages []llms.Me
 		// Check if we should retry
 		if attempt >= r.maxRetries {
 			if lastErr != nil {
+				if retryableLLMFailure(lastErr) {
+					return nil, &RetryExhaustedError{Attempts: attempt + 1, RetryAfter: retryDelay(lastErr, 0), Err: lastErr}
+				}
 				return nil, fmt.Errorf("all retry attempts failed, last error: %w", lastErr)
 			}
 			return nil, err

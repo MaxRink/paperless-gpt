@@ -77,7 +77,7 @@ func (app *App) getSuggestedCorrespondent(ctx context.Context, content string, s
 		},
 	}, llms.WithMaxTokens(512))
 	if err != nil {
-		return "", fmt.Errorf("error getting response from LLM: %v", err)
+		return "", fmt.Errorf("error getting response from LLM: %w", err)
 	}
 
 	response := textsanitize.StripReasoning(strings.TrimSpace(completion.Choices[0].Content))
@@ -152,7 +152,7 @@ func (app *App) getSuggestedTags(
 	})
 	if err != nil {
 		logger.Errorf("Error getting response from LLM: %v", err)
-		return nil, fmt.Errorf("error getting response from LLM: %v", err)
+		return nil, fmt.Errorf("error getting response from LLM: %w", err)
 	}
 
 	response := textsanitize.StripReasoning(completion.Choices[0].Content)
@@ -273,7 +273,7 @@ func (app *App) getSuggestedDocumentType(
 	})
 	if err != nil {
 		logger.Errorf("Error getting response from LLM: %v", err)
-		return "", fmt.Errorf("error getting response from LLM: %v", err)
+		return "", fmt.Errorf("error getting response from LLM: %w", err)
 	}
 
 	response := strings.TrimSpace(textsanitize.StripReasoning(completion.Choices[0].Content))
@@ -347,7 +347,7 @@ func (app *App) getSuggestedTitle(ctx context.Context, content string, originalT
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("error getting response from LLM: %v", err)
+		return "", fmt.Errorf("error getting response from LLM: %w", err)
 	}
 	result := textsanitize.StripReasoning(completion.Choices[0].Content)
 	return strings.TrimSpace(strings.Trim(result, "\"")), nil
@@ -408,7 +408,7 @@ func (app *App) getSuggestedCreatedDate(ctx context.Context, content string, log
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("error getting response from LLM: %v", err)
+		return "", fmt.Errorf("error getting response from LLM: %w", err)
 	}
 	result := textsanitize.StripReasoning(completion.Choices[0].Content)
 	result = strings.TrimSpace(strings.Trim(result, "\""))
@@ -545,7 +545,7 @@ func (app *App) getSuggestedCustomFields(ctx context.Context, doc Document, sele
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("error getting response from LLM for custom fields: %v", err)
+		return nil, fmt.Errorf("error getting response from LLM for custom fields: %w", err)
 	}
 
 	response := textsanitize.StripReasoning(completion.Choices[0].Content)
@@ -770,7 +770,7 @@ func (app *App) generateSingleDocumentSuggestion(ctx context.Context, suggestion
 		suggestedTitle, err = app.getSuggestedTitle(ctx, content, suggestedTitle, docLogger, wfTemplate("title_prompt", titleTemplate))
 		if err != nil {
 			docLogger.Errorf("Error processing document %d: %v", documentID, err)
-			return DocumentSuggestion{}, fmt.Errorf("Document %d: %v", documentID, err)
+			return DocumentSuggestion{}, &WorkflowStepError{Step: "title", Err: err}
 		}
 	}
 
@@ -778,7 +778,7 @@ func (app *App) generateSingleDocumentSuggestion(ctx context.Context, suggestion
 		suggestedTags, err = app.getSuggestedTags(ctx, content, suggestedTitle, generationContext.availableTagNames, doc.Tags, docLogger, wfTemplate("tag_prompt", tagTemplate))
 		if err != nil {
 			logger.Errorf("Error generating tags for document %d: %v", documentID, err)
-			return DocumentSuggestion{}, fmt.Errorf("Document %d: %v", documentID, err)
+			return DocumentSuggestion{}, &WorkflowStepError{Step: "tags", Err: err}
 		}
 	}
 
@@ -787,7 +787,7 @@ func (app *App) generateSingleDocumentSuggestion(ctx context.Context, suggestion
 		suggestedCorrespondent, err = app.getSuggestedCorrespondent(ctx, content, suggestedTitle, promptCorrespondents, correspondentBlackList, wfTemplate("correspondent_prompt", correspondentTemplate))
 		if err != nil {
 			log.Errorf("Error generating correspondents for document %d: %v", documentID, err)
-			return DocumentSuggestion{}, fmt.Errorf("Document %d: %v", documentID, err)
+			return DocumentSuggestion{}, &WorkflowStepError{Step: "correspondent", Err: err}
 		}
 	}
 
@@ -798,7 +798,7 @@ func (app *App) generateSingleDocumentSuggestion(ctx context.Context, suggestion
 			suggestedDocumentType, err = app.getSuggestedDocumentType(ctx, content, suggestedTitle, generationContext.availableDocumentTypeNames, docLogger, wfTemplate("document_type_prompt", documentTypeTemplate))
 			if err != nil {
 				log.Errorf("Error generating document type for document %d: %v", documentID, err)
-				return DocumentSuggestion{}, fmt.Errorf("Document %d: %v", documentID, err)
+				return DocumentSuggestion{}, &WorkflowStepError{Step: "document_type", Err: err}
 			}
 		}
 	}
@@ -807,7 +807,7 @@ func (app *App) generateSingleDocumentSuggestion(ctx context.Context, suggestion
 		suggestedCreatedDate, err = app.getSuggestedCreatedDate(ctx, content, docLogger, wfTemplate("date_prompt", createdDateTemplate))
 		if err != nil {
 			log.Errorf("Error generating createdDate for document %d: %v", documentID, err)
-			return DocumentSuggestion{}, fmt.Errorf("Document %d: %v", documentID, err)
+			return DocumentSuggestion{}, &WorkflowStepError{Step: "created_date", Err: err}
 		}
 	}
 
@@ -820,7 +820,7 @@ func (app *App) generateSingleDocumentSuggestion(ctx context.Context, suggestion
 			suggestedCustomFields, err = app.getSuggestedCustomFields(ctx, doc, selectedIDs, docLogger, wfTemplate("custom_field_prompt", customFieldTemplate))
 			if err != nil {
 				log.Errorf("Error generating custom fields for document %d: %v", documentID, err)
-				return DocumentSuggestion{}, fmt.Errorf("Document %d: %v", documentID, err)
+				return DocumentSuggestion{}, &WorkflowStepError{Step: "custom_fields", Err: err}
 			}
 		}
 	}
