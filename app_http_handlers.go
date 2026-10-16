@@ -191,7 +191,7 @@ func (app *App) generateSuggestionsHandler(c *gin.Context) {
 		return
 	}
 
-	results, err := app.generateDocumentSuggestions(ctx, suggestionRequest, log.WithContext(ctx))
+	results, err := app.generateDocumentSuggestions(ctx, suggestionRequest, requestLogger(ctx))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error processing documents: %v", err)})
 		log.Errorf("Error processing documents: %v", err)

@@ -408,6 +408,14 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for k, v := range t.headers {
 		req.Header.Set(k, v)
 	}
+	if correlation, ok := requestCorrelationFromContext(req.Context()); ok {
+		if correlation.requestID != "" {
+			req.Header.Set("X-Request-ID", correlation.requestID)
+		}
+		if correlation.traceparent != "" {
+			req.Header.Set("traceparent", correlation.traceparent)
+		}
+	}
 	resp, err := t.base.RoundTrip(req)
 	if err != nil || resp == nil || resp.StatusCode != http.StatusTooManyRequests {
 		return resp, err

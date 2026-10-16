@@ -517,6 +517,7 @@ func main() {
 
 	// Create a Gin router with default middleware (logger and recovery)
 	router := gin.Default()
+	router.Use(requestCorrelationMiddleware())
 
 	// API routes
 	api := router.Group("/api")

@@ -249,6 +249,7 @@ func (client *PaperlessClient) Do(ctx context.Context, method, path string, body
 	if err != nil {
 		return nil, err
 	}
+	decorateOutboundRequest(req)
 	req.Header.Set("Authorization", fmt.Sprintf("Token %s", client.APIToken))
 
 	// Set Content-Type if body is present
