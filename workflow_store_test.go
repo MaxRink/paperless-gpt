@@ -330,3 +330,16 @@ func TestWorkflowCustomFieldSelection(t *testing.T) {
 	// Duplicates and invalid ids are dropped, order is kept.
 	assert.Equal(t, []int{7, 4}, normalizeWorkflow(WorkflowConfig{CustomFieldIDs: []int{7, 0, 4, 7, -1}}).CustomFieldIDs)
 }
+
+func TestWorkflowPromptWarningsExposeMissingCustomFieldInputs(t *testing.T) {
+	warnings := workflowPromptWarnings(WorkflowConfig{ID: "invoices", Prompts: map[string]string{
+		"custom_field_prompt": "Extract fields only.",
+	}})
+	assert.Len(t, warnings, 2)
+	assert.Contains(t, warnings[0], "{{ .Content }}")
+	assert.Contains(t, warnings[1], "{{ .CustomFieldsXML }}")
+
+	assert.Empty(t, workflowPromptWarnings(WorkflowConfig{Prompts: map[string]string{
+		"custom_field_prompt": "{{ .Content }}\n{{ .CustomFieldsXML }}",
+	}}))
+}

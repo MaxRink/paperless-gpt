@@ -240,7 +240,27 @@ func (app *App) validateWorkflowConfig(wf WorkflowConfig) error {
 	if err := validatePromptTemplates(wf); err != nil {
 		return err
 	}
+	for _, warning := range workflowPromptWarnings(wf) {
+		log.WithField("workflow", wf.ID).Warn(warning)
+	}
 	return validateWorkflowOCRConfig(app, wf)
+}
+
+// workflowPromptWarnings reports prompt overrides that can silently remove the
+// document data or field schema from an otherwise valid workflow. These remain
+// warnings because specialized prompts may intentionally omit a token; the
+// API must preserve that choice while making the risk visible at save time.
+func workflowPromptWarnings(wf WorkflowConfig) []string {
+	var warnings []string
+	if p, ok := wf.Prompts["custom_field_prompt"]; ok {
+		if !strings.Contains(p, "{{ .Content }}") && !strings.Contains(p, "{{.Content }}") {
+			warnings = append(warnings, "custom_field_prompt does not include {{ .Content }}; custom-field extraction will not see document text")
+		}
+		if !strings.Contains(p, "{{ .CustomFieldsXML }}") && !strings.Contains(p, "{{.CustomFieldsXML }}") {
+			warnings = append(warnings, "custom_field_prompt does not include {{ .CustomFieldsXML }}; the model will not see the selected field schema")
+		}
+	}
+	return warnings
 }
 
 // validatePromptTemplates rejects prompt keys that do not exist and

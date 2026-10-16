@@ -274,6 +274,51 @@ func TestCreateCorrespondentInvalidatesCacheBeforeMalformedResponse(t *testing.T
 	assert.Equal(t, 2, getCalls, "the malformed successful response must not leave a cached negative result")
 }
 
+func TestCreateOrGetCorrespondentSerializesConcurrentCreation(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.teardown()
+	var mu sync.Mutex
+	created := false
+	postCalls := 0
+	env.setMockResponse("/api/correspondents/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodPost {
+			postCalls++
+			created = true
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":42}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if created {
+			_, _ = w.Write([]byte(`{"results":[{"id":42,"name":"Acme GmbH"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	})
+
+	var wg sync.WaitGroup
+	ids := make([]int, 2)
+	errs := make([]error, 2)
+	for i := range ids {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ids[i], errs[i] = env.client.CreateOrGetCorrespondent(context.Background(), Correspondent{Name: "Acme GmbH"})
+		}(i)
+	}
+	wg.Wait()
+
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
+	assert.Equal(t, []int{42, 42}, ids)
+	assert.Equal(t, 1, postCalls)
+}
+
 func TestCreateTagInvalidatesCacheBeforeMalformedResponse(t *testing.T) {
 	env := newTestEnv(t)
 	defer env.teardown()
