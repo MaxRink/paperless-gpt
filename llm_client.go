@@ -64,27 +64,28 @@ func retryDelay(err error, backoff time.Duration) time.Duration {
 
 // Call implements the llms.Model interface
 func (r *RateLimitedLLM) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
-	if r.rateLimiter != nil {
-		if err := r.rateLimiter.Wait(ctx); err != nil {
-			return "", fmt.Errorf("rate limiter wait failed: %w", err)
-		}
-	}
-
-	var lastErr error
 	attempt := 0
 
 	for {
+		if r.rateLimiter != nil {
+			if err := r.rateLimiter.Wait(ctx); err != nil {
+				return "", fmt.Errorf("rate limiter wait failed: %w", err)
+			}
+		}
 		response, err := r.llm.Call(ctx, prompt, options...)
 		if err == nil {
 			return response, nil
 		}
+		if !retryableLLMFailure(err) {
+			return "", fmt.Errorf("LLM request failed: %w", err)
+		}
 
 		// Check if we should retry
 		if attempt >= r.maxRetries {
-			if lastErr != nil {
-				return "", fmt.Errorf("all retry attempts failed, last error: %w", lastErr)
+			if retryableLLMFailure(err) {
+				return "", &RetryExhaustedError{Attempts: attempt + 1, RetryAfter: retryDelay(err, 0), Err: err}
 			}
-			return "", err
+			return "", fmt.Errorf("all retry attempts failed, last error: %w", err)
 		}
 
 		// Calculate exponential backoff with jitter
@@ -107,7 +108,6 @@ func (r *RateLimitedLLM) Call(ctx context.Context, prompt string, options ...llm
 		case <-time.After(jitter):
 			// Continue with retry
 			attempt++
-			lastErr = err
 		}
 	}
 }
@@ -167,17 +167,14 @@ func NewRateLimitedLLM(llm llms.Model, config RateLimitConfig) *RateLimitedLLM {
 
 // GenerateContent implements the LLM interface with rate limiting and retries
 func (r *RateLimitedLLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
-	if r.rateLimiter != nil {
-		// Wait for rate limiter
-		if err := r.rateLimiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("rate limiter wait failed: %w", err)
-		}
-	}
-
-	var lastErr error
 	attempt := 0
 
 	for {
+		if r.rateLimiter != nil {
+			if err := r.rateLimiter.Wait(ctx); err != nil {
+				return nil, fmt.Errorf("rate limiter wait failed: %w", err)
+			}
+		}
 		resp, err := r.llm.GenerateContent(ctx, messages, options...)
 		if err == nil {
 			// Return the pointer response directly
@@ -194,13 +191,16 @@ func (r *RateLimitedLLM) GenerateContent(ctx context.Context, messages []llms.Me
 			log.Warn("LLM returned an empty response; treating it as an empty suggestion")
 			return &llms.ContentResponse{Choices: []*llms.ContentChoice{{}}}, nil
 		}
+		if !retryableLLMFailure(err) {
+			return nil, fmt.Errorf("LLM request failed: %w", err)
+		}
 
 		// Check if we should retry
 		if attempt >= r.maxRetries {
-			if lastErr != nil {
-				return nil, fmt.Errorf("all retry attempts failed, last error: %w", lastErr)
+			if retryableLLMFailure(err) {
+				return nil, &RetryExhaustedError{Attempts: attempt + 1, RetryAfter: retryDelay(err, 0), Err: err}
 			}
-			return nil, err
+			return nil, fmt.Errorf("all retry attempts failed, last error: %w", err)
 		}
 
 		// Calculate exponential backoff with jitter
@@ -221,7 +221,6 @@ func (r *RateLimitedLLM) GenerateContent(ctx context.Context, messages []llms.Me
 		case <-time.After(jitter):
 			// Continue with retry
 			attempt++
-			lastErr = err
 		}
 	}
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -134,7 +136,22 @@ func (app *App) workflowPreviewHandler(c *gin.Context) {
 	request.IsAutoProcessing = false // a preview hands over no tags
 	suggestions, err := app.generateDocumentSuggestions(ctx, request, requestLogger(ctx).WithField("document_id", doc.ID))
 	if err != nil || len(suggestions) == 0 {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("The LLM call failed: %v", err)})
+		response := gin.H{"error": fmt.Sprintf("The LLM call failed: %v", err)}
+		var stepErr *WorkflowStepError
+		if errors.As(err, &stepErr) {
+			response["failed_step"] = stepErr.Step
+			var retryErr *RetryExhaustedError
+			if errors.As(stepErr, &retryErr) {
+				response["retryable"] = true
+				response["attempts"] = retryErr.Attempts
+				if retryErr.RetryAfter > 0 && retryErr.RetryAfter < maxProviderRetryDelay {
+					response["retry_after_seconds"] = int(math.Ceil(retryErr.RetryAfter.Seconds()))
+				}
+			} else {
+				response["retryable"] = false
+			}
+		}
+		c.JSON(http.StatusBadGateway, response)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
