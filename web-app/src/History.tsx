@@ -48,13 +48,7 @@ const History: React.FC = () => {
     fetchUrl();
   }, []);
 
-  // Get modifications with pagination
-  useEffect(() => {
-    fetchModifications(currentPage);
-  }, [currentPage]);
-
   const fetchModifications = async (page: number) => {
-    setLoading(true);
     try {
       const response = await fetch(`./api/modifications?page=${page}&pageSize=${pageSize}`);
       if (!response.ok) {
@@ -70,6 +64,14 @@ const History: React.FC = () => {
       setLoading(false);
     }
   };
+
+  // Get modifications with pagination
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetchModifications(currentPage);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [currentPage]);
 
   const handleUndo = async (id: number) => {
     try {

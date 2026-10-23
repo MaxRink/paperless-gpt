@@ -188,7 +188,10 @@ const DocumentProcessor: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    fetchInitialData();
+    const timer = window.setTimeout(() => {
+      void fetchInitialData();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [fetchInitialData]);
 
   // Attach custom-field names to suggestions for the review.

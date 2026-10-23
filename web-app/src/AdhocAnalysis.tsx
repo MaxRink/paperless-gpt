@@ -17,7 +17,6 @@ const AdhocAnalysis: React.FC = () => {
 
   const fetchDocuments = async () => {
     try {
-      setLoading(true);
       const [documentsRes, filterTagRes] = await Promise.all([
         axios.get<Document[]>('./api/documents'),
         axios.get<{ tag: string }>('./api/filter-tag'),
@@ -43,8 +42,10 @@ const AdhocAnalysis: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchDocuments();
-    fetchPromptTemplate();
+    const timer = window.setTimeout(() => {
+      void Promise.all([fetchDocuments(), fetchPromptTemplate()]);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const handleSelectDocument = (docId: number) => {
@@ -73,8 +74,12 @@ const AdhocAnalysis: React.FC = () => {
         prompt,
       });
       setAnalysisResult(res.data.result);
-    } catch (err: any) {
-      setError(err.response?.data?.error || err.message || 'An unknown error occurred.');
+    } catch (err: unknown) {
+      if (axios.isAxiosError<{ error?: string }>(err)) {
+        setError(err.response?.data?.error || err.message || 'An unknown error occurred.');
+      } else {
+        setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+      }
     } finally {
       setProcessing(false);
     }
