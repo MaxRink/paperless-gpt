@@ -51,16 +51,19 @@ const SuggestionsReview: React.FC<SuggestionsReviewProps> = ({
   const [showSummary, setShowSummary] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const statsRef = useRef({ docs: 0, fields: 0 });
+  const [stats, setStats] = useState({ docs: 0, fields: 0 });
   const finishedRef = useRef(false);
 
   // A retry job can append documents after mount.
   useEffect(() => {
-    setItems((prev) => {
-      const known = new Set(prev.map((item) => item.id));
-      const added = suggestions.filter((s) => !known.has(s.id));
-      return added.length > 0 ? [...prev, ...added] : prev;
-    });
+    const timer = window.setTimeout(() => {
+      setItems((prev) => {
+        const known = new Set(prev.map((item) => item.id));
+        const added = suggestions.filter((s) => !known.has(s.id));
+        return added.length > 0 ? [...prev, ...added] : prev;
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [suggestions]);
 
   const updateItem = useCallback(
@@ -141,13 +144,15 @@ const SuggestionsReview: React.FC<SuggestionsReviewProps> = ({
     );
     if (allDecided) {
       finishedRef.current = true;
-      onFinished(statsRef.current.docs, statsRef.current.fields);
+      onFinished(stats.docs, stats.fields);
     }
-  }, [items, decisions, onFinished]);
+  }, [items, decisions, onFinished, stats]);
 
   const markApplied = (docId: number, fieldChanges: number) => {
-    statsRef.current.docs += 1;
-    statsRef.current.fields += fieldChanges;
+    setStats((prev) => ({
+      docs: prev.docs + 1,
+      fields: prev.fields + fieldChanges,
+    }));
     setDecisions((prev) => ({ ...prev, [docId]: "applied" }));
     if (reviewJobId) {
       recordReviewDecision(localStorage, reviewJobId, docId, "applied");
@@ -249,7 +254,7 @@ const SuggestionsReview: React.FC<SuggestionsReviewProps> = ({
       setShowDiscardConfirm(true);
     } else if (!finishedRef.current) {
       finishedRef.current = true;
-      onFinished(statsRef.current.docs, statsRef.current.fields);
+      onFinished(stats.docs, stats.fields);
     }
   };
 
@@ -362,15 +367,15 @@ const SuggestionsReview: React.FC<SuggestionsReviewProps> = ({
         open={showDiscardConfirm}
         title="Close review?"
         body={
-          statsRef.current.docs > 0
-            ? `${statsRef.current.docs} applied ${statsRef.current.docs === 1 ? "document keeps" : "documents keep"} their changes. The remaining ${pendingItems.length} undecided ${pendingItems.length === 1 ? "suggestion" : "suggestions"} will be discarded — the documents stay in the queue.`
+          stats.docs > 0
+            ? `${stats.docs} applied ${stats.docs === 1 ? "document keeps" : "documents keep"} their changes. The remaining ${pendingItems.length} undecided ${pendingItems.length === 1 ? "suggestion" : "suggestions"} will be discarded — the documents stay in the queue.`
             : `The ${pendingItems.length} undecided ${pendingItems.length === 1 ? "suggestion" : "suggestions"} and your edits will be discarded. The documents stay in the queue, nothing is changed in paperless-ngx.`
         }
         confirmLabel="Discard suggestions"
         onConfirm={() => {
           setShowDiscardConfirm(false);
-          if (statsRef.current.docs > 0) {
-            onFinished(statsRef.current.docs, statsRef.current.fields);
+          if (stats.docs > 0) {
+            onFinished(stats.docs, stats.fields);
           } else {
             onDiscard();
           }

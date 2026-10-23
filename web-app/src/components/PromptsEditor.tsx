@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 
 // Global prompt files that AI workflows can replace with their own version,
@@ -48,7 +48,10 @@ const PromptsEditor: React.FC = () => {
       .then((data) => {
         setPrompts(data);
         const first = Object.keys(data).sort()[0];
-        if (first && !selectedPrompt) setSelectedPrompt(first);
+        if (first && !selectedPrompt) {
+          setSelectedPrompt(first);
+          setContent(data[first] || '');
+        }
         setIsLoading(false);
       })
       .catch((err) => {
@@ -58,27 +61,7 @@ const PromptsEditor: React.FC = () => {
     return () => controller.abort();
   }, [selectedPrompt]);
 
-  useEffect(() => {
-    if (selectedPrompt && prompts[selectedPrompt]) {
-      setContent(prompts[selectedPrompt]);
-    } else {
-      setContent('');
-    }
-  }, [selectedPrompt, prompts]);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const isModS = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's';
-      if (isModS) {
-        e.preventDefault();
-        if (!isSaving && selectedPrompt) handleSave();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isSaving, selectedPrompt, content]);
-
-  const handleSave = () => {
+  const handleSave = useCallback(() => {
     if (!selectedPrompt) return;
 
     setIsSaving(true);
@@ -112,7 +95,19 @@ const PromptsEditor: React.FC = () => {
         setTimeout(() => setError(null), 5000);
       })
       .finally(() => setIsSaving(false));
-  };
+  }, [content, selectedPrompt]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isModS = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's';
+      if (isModS) {
+        e.preventDefault();
+        if (!isSaving && selectedPrompt) handleSave();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleSave, isSaving, selectedPrompt]);
 
   if (isLoading) {
     return <div className="p-4">Loading prompts...</div>;
@@ -146,7 +141,10 @@ const PromptsEditor: React.FC = () => {
               {Object.keys(prompts).sort().map((filename) => (
                 <li key={filename}
                   className={`p-2 rounded cursor-pointer transition-colors duration-200 ${selectedPrompt === filename ? 'bg-blue-500 text-white' : 'hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-300'}`}
-                  onClick={() => setSelectedPrompt(filename)}
+                  onClick={() => {
+                    setSelectedPrompt(filename);
+                    setContent(prompts[filename] || '');
+                  }}
                 >
                   {filename.replace(/_/g, ' ').replace('.tmpl', '')}
                 </li>

@@ -16,14 +16,12 @@ const CustomFieldsEditor: React.FC = () => {
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [initialSettings, setInitialSettings] = useState<SettingsData | null>(null);
-  const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const fetchInitialData = useCallback(async (forcePull = false) => {
-    setIsLoading(true);
     try {
       const settingsRes = await fetch('./api/settings');
       if (!settingsRes.ok) throw new Error('Failed to fetch settings');
@@ -46,15 +44,17 @@ const CustomFieldsEditor: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    fetchInitialData();
+    const timer = window.setTimeout(() => {
+      void fetchInitialData();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [fetchInitialData]);
 
-  useEffect(() => {
-    if (initialSettings && settings) {
-      const hasChanged = JSON.stringify(settings) !== JSON.stringify(initialSettings);
-      setIsDirty(hasChanged);
-    }
-  }, [settings, initialSettings]);
+  const isDirty = Boolean(
+    initialSettings &&
+      settings &&
+      JSON.stringify(settings) !== JSON.stringify(initialSettings)
+  );
 
   const handleSaveSettings = useCallback(async () => {
     if (!isDirty || !settings) return;
