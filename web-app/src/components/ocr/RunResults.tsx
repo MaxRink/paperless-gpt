@@ -77,7 +77,9 @@ const RunResults: React.FC<RunResultsProps> = ({
   // re-OCR response can't be applied after the user switches runs/documents.
   const activeKey = `${document.id}:${selectedJobId}`;
   const activeKeyRef = useRef(activeKey);
-  activeKeyRef.current = activeKey;
+  useEffect(() => {
+    activeKeyRef.current = activeKey;
+  }, [activeKey]);
 
   const selectedRun = runs.find((run) => run.job_id === selectedJobId);
   const newestJobId = runs[0]?.job_id;
@@ -86,8 +88,10 @@ const RunResults: React.FC<RunResultsProps> = ({
   useEffect(() => {
     if (!selectedJobId) return;
     let cancelled = false;
-    setPages(null);
-    setEditedTexts({});
+    const timer = window.setTimeout(() => {
+      setPages(null);
+      setEditedTexts({});
+    }, 0);
     fetchOCRPages(document.id, selectedJobId)
       .then(({ pages }) => {
         if (!cancelled) setPages(pages);
@@ -98,20 +102,25 @@ const RunResults: React.FC<RunResultsProps> = ({
       });
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [document.id, selectedJobId]);
 
   useEffect(() => {
     if (!compareJobId) {
-      setComparePages(null);
-      setCompareError(null);
-      return;
+      const timer = window.setTimeout(() => {
+        setComparePages(null);
+        setCompareError(null);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
     let cancelled = false;
     // Clear the previous comparison immediately so stale text isn't shown
     // under the new run label while the request is in flight.
-    setComparePages(null);
-    setCompareError(null);
+    const timer = window.setTimeout(() => {
+      setComparePages(null);
+      setCompareError(null);
+    }, 0);
     fetchOCRPages(document.id, compareJobId)
       .then(({ pages }) => {
         if (!cancelled) setComparePages(pages);
@@ -122,6 +131,7 @@ const RunResults: React.FC<RunResultsProps> = ({
       });
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [document.id, compareJobId]);
 
