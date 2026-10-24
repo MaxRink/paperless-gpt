@@ -4,7 +4,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       routine-updates:
         patterns:
@@ -18,7 +18,7 @@ updates:
     - /web-app
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       routine-updates:
         patterns:
@@ -30,7 +30,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       routine-updates:
         patterns:
@@ -42,7 +42,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       routine-updates:
         patterns:
@@ -54,7 +54,7 @@ updates:
     directory: /web-app
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       routine-updates:
         patterns:
